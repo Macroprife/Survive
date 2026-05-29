@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
-RUN touch ./backend/__init__.py
 
 EXPOSE 8000
 

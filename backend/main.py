@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import sqlite3
 from datetime import datetime
 from contextlib import contextmanager
@@ -13,8 +14,33 @@ from . import game_engine
 
 app = FastAPI(title="废土求生 API")
 
-# In-memory game sessions
-games: dict[str, GameState] = {}
+# In-memory game sessions with TTL tracking
+games: dict[str, tuple[float, GameState]] = {}  # (last_active_timestamp, state)
+GAME_TTL = 24 * 3600  # 24 hours
+MAX_SAVES_PER_GAME = 10
+
+
+def _get_game(game_id: str) -> GameState | None:
+    """Get game state, refreshing its TTL."""
+    entry = games.get(game_id)
+    if not entry:
+        return None
+    ts, state = entry
+    # Check TTL
+    if time.time() - ts > GAME_TTL:
+        del games[game_id]
+        return None
+    # Refresh timestamp
+    games[game_id] = (time.time(), state)
+    return state
+
+
+def _cleanup_stale_games():
+    """Remove games that haven't been accessed for longer than TTL."""
+    now = time.time()
+    stale = [gid for gid, (ts, _) in games.items() if now - ts > GAME_TTL]
+    for gid in stale:
+        del games[gid]
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "saves.db")
 
@@ -50,8 +76,9 @@ def get_db():
 
 @app.post("/api/new-game")
 def new_game():
+    _cleanup_stale_games()
     state = game_engine.create_new_game()
-    games[state.game_id] = state
+    games[state.game_id] = (time.time(), state)
     return {
         "game_id": state.game_id,
         "state": state.model_dump(),
@@ -61,7 +88,7 @@ def new_game():
 
 @app.get("/api/game/{game_id}")
 def get_game(game_id: str):
-    state = games.get(game_id)
+    state = _get_game(game_id)
     if not state:
         raise HTTPException(404, "游戏不存在")
     return state.model_dump()
@@ -69,7 +96,7 @@ def get_game(game_id: str):
 
 @app.post("/api/game/{game_id}/action")
 def do_action(game_id: str, action: Action):
-    state = games.get(game_id)
+    state = _get_game(game_id)
     if not state:
         raise HTTPException(404, "游戏不存在")
 
@@ -144,7 +171,7 @@ def do_action(game_id: str, action: Action):
 
 @app.post("/api/game/{game_id}/save")
 def save_game(game_id: str):
-    state = games.get(game_id)
+    state = _get_game(game_id)
     if not state:
         raise HTTPException(404, "游戏不存在")
     save_id = f"save_{game_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -154,6 +181,13 @@ def save_game(game_id: str):
         conn.execute(
             "INSERT OR REPLACE INTO saves (save_id, save_name, game_state, saved_at) VALUES (?, ?, ?, ?)",
             (save_id, save_name, state.model_dump_json(), saved_at),
+        )
+        # Limit: keep only the most recent MAX_SAVES_PER_GAME saves per game
+        conn.execute(
+            """DELETE FROM saves WHERE save_id IN (
+                SELECT save_id FROM saves WHERE save_id LIKE ? ORDER BY saved_at DESC LIMIT -1 OFFSET ?
+            )""",
+            (f"save_{game_id}_%", MAX_SAVES_PER_GAME),
         )
         conn.commit()
     return {"save_id": save_id, "save_name": save_name, "saved_at": saved_at, "message": "游戏已保存。"}
@@ -173,7 +207,7 @@ def load_game(save_id: str):
     if not row:
         raise HTTPException(404, "存档不存在")
     state = GameState.model_validate_json(row["game_state"])
-    games[state.game_id] = state
+    games[state.game_id] = (time.time(), state)
     return {"game_id": state.game_id, "state": state.model_dump(), "message": f"已加载第{state.day}天的存档。"}
 
 
@@ -186,7 +220,10 @@ if os.path.isdir(frontend_dir):
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        file_path = os.path.join(frontend_dir, full_path)
+        file_path = os.path.realpath(os.path.join(frontend_dir, full_path))
+        # Prevent path traversal attacks
+        if not file_path.startswith(os.path.realpath(frontend_dir)):
+            raise HTTPException(404, "文件未找到")
         if os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(frontend_dir, "index.html"))

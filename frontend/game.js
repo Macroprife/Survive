@@ -245,7 +245,7 @@ const Game = (() => {
             { id: 'medicine', name: '草药药剂', materials: '草药 x1 + 水 x1', effect: 'HP +30' },
             { id: 'bandage', name: '消毒绷带', materials: '布料 x1 + 酒精 x1', effect: 'HP +20' },
             { id: 'weapon', name: '自制武器', materials: '金属 x2 + 木头 x1', effect: '攻击 +8' },
-            { id: 'armor_up', name: '强化护甲', materials: '金属 x3 + 布料 x2', effect: '防御 12' },
+            { id: 'armor', name: '强化护甲', materials: '金属 x3 + 布料 x2', effect: '防御 12' },
             { id: 'torch', name: '火把', materials: '木头 x1 + 布料 x1', effect: '降低遭遇率' },
         ];
 

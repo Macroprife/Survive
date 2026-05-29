@@ -93,7 +93,7 @@ CRAFT_RECIPES = {
     "medicine": {"ingredients": [("herb", 1), ("water", 1)], "result": {"id": "medicine", "name": "草药药剂", "desc": "用草药和水熬制的药剂"}},
     "bandage": {"ingredients": [("cloth", 1), ("alcohol", 1)], "result": {"id": "bandage", "name": "消毒绷带", "desc": "用酒精消毒过的绷带"}},
     "weapon": {"ingredients": [("metal", 2), ("wood", 1)], "result": {"id": "weapon", "name": "自制武器", "desc": "用金属和木头打造的简易武器"}},
-    "armor_up": {"ingredients": [("metal", 3), ("cloth", 2)], "result": {"id": "armor", "name": "强化护甲", "desc": "用金属片和布料缝制的防护装备"}},
+    "armor": {"ingredients": [("metal", 3), ("cloth", 2)], "result": {"id": "armor", "name": "强化护甲", "desc": "用金属片和布料缝制的防护装备"}},
     "torch": {"ingredients": [("wood", 1), ("cloth", 1)], "result": {"id": "torch", "name": "火把", "desc": "简易照明工具，探索时降低遭遇率"}},
 }
 
@@ -239,6 +239,15 @@ def apply_daily_consumption(state: GameState) -> list[Event]:
         events.append(Event(type="sanity_break", title=bad[0], description=bad[1]))
         if "生命值" in bad[1]:
             p.hp = _clamp(p.hp - 5)
+        # 暴怒发作：随机移除 1~2 个物品
+        if "砸毁" in bad[1] and state.inventory:
+            remove_count = min(random.randint(1, 2), len(state.inventory))
+            removed = []
+            for _ in range(remove_count):
+                victim = random.choice(state.inventory)
+                removed.append(victim.name)
+                state.inventory.remove(victim)
+            events.append(Event(type="damage", title="物资损失", description=f"被砸毁的物品：{'、'.join(removed)}"))
 
     if p.hunger > 0 and p.thirst > 0:
         events.append(Event(
@@ -316,9 +325,11 @@ def do_explore(state: GameState, location_id: str | None = None) -> list[Event]:
     # Location description
     events.append(Event(type="move", title=loc["name"], description=loc["description"]))
 
-    # Danger check
+    # Danger check (torch halves encounter rate)
+    has_torch = _has_item(state.inventory, "torch")
+    effective_rate = loc["encounter_rate"] * (0.5 if has_torch else 1.0)
     danger_roll = random.random()
-    if danger_roll < loc["encounter_rate"]:
+    if danger_roll < effective_rate:
         event = _generate_encounter(state, loc["danger_level"])
         events.append(event)
         if event.type == "combat" and not event.resolved:
@@ -339,6 +350,10 @@ def do_explore(state: GameState, location_id: str | None = None) -> list[Event]:
         evt = _generate_random_event(state)
         if evt:
             events.append(evt)
+            # If random event triggered combat, wait for player choice
+            if evt.type == "combat" and not evt.resolved:
+                state.pending_event = evt
+                return events
 
     # Day advance
     state.day += 1
@@ -408,8 +423,26 @@ def _generate_random_event(state: GameState) -> Event | None:
         _add_item(state.inventory, item[0], item[1], "在废墟中找到的物资")
         return Event(type="loot", title=title, description=f"{desc}\n\n你获得了 {item[1]}！")
     elif etype == "clue":
-        state.radio_parts_found += 1
-        return Event(type="clue", title=title, description=f"{desc}\n\n（线索 +1，当前线索数：{state.radio_parts_found}）")
+        # Add a radio_parts item to inventory (win condition checks inventory count)
+        _add_item(state.inventory, "radio_parts", "无线电零件", "通过线索找到的通讯设备零件")
+        return Event(type="clue", title=title, description=f"{desc}\\n\\n（获得无线电零件！）")
+    elif etype == "hostile":
+        enemy = random.choice(["疯狂的拾荒者", "武装匪徒", "绝望的幸存者"])
+        enemy_hp = random.randint(15, 35)
+        return Event(
+            type="combat", title=title,
+            description=f"{desc}\n\n你需要做出选择：\n⚔️ 攻击 - 与敌人战斗\n🛡️ 防御 - 减少受到的伤害\n🏃 逃跑 - 尝试逃离（可能失败）",
+            effects={"enemy": enemy, "enemy_hp": enemy_hp},
+            resolved=False,
+        )
+    elif etype == "weather":
+        dmg = random.randint(3, 10)
+        state.player.hp = _clamp(state.player.hp - dmg)
+        return Event(type="weather", title=title, description=f"{desc}\n\n生命值 -{dmg}", effects={"hp": -dmg})
+    elif etype == "trap":
+        trap_dmg = random.randint(5, 15)
+        state.player.hp = _clamp(state.player.hp - trap_dmg)
+        return Event(type="trap", title=title, description=f"{desc}\n\n生命值 -{trap_dmg}", effects={"hp": -trap_dmg})
     return None
 
 
@@ -490,8 +523,17 @@ def do_craft(state: GameState, recipe_id: str) -> Event:
                  description=f"你成功制作了 {res['name']}！({res['desc']})")
 
 
+def _count_item(inventory: list[Item], item_id: str) -> int:
+    """Count total quantity of an item in inventory."""
+    for item in inventory:
+        if item.id == item_id:
+            return item.quantity
+    return 0
+
+
 def check_win_condition(state: GameState) -> bool:
-    if state.radio_parts_found >= 3 and _has_item(state.inventory, "radio_parts", 3):
+    # Only check inventory — no dual tracking with radio_parts_found
+    if _count_item(state.inventory, "radio_parts") >= 3:
         state.game_over = True
         state.ending_reached = True
         state.game_over_reason = "good"
