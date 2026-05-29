@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>废土求生</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <!-- Title Banner -->
+        <header id="title-banner">
+            <h1>废 土 求 生</h1>
+            <div id="header-right">
+                <span id="day-counter">第 1 天</span>
+                <button id="btn-help" title="帮助">❓</button>
+            </div>
+        </header>
+
+        <!-- Main Game Area -->
+        <main id="game-main">
+            <!-- Left: Canvas + Narrative -->
+            <section id="left-panel">
+                <div id="canvas-wrapper">
+                    <canvas id="game-canvas" width="400" height="300"></canvas>
+                    <div id="scene-label">庇护所</div>
+                </div>
+                <div id="narrative-area">
+                    <div id="narrative-content"></div>
+                    <div id="cursor-blink">_</div>
+                </div>
+            </section>
+
+            <!-- Right: Stats + Inventory + Actions -->
+            <section id="right-panel">
+                <!-- Stats -->
+                <div id="stats-panel">
+                    <h3>▸ 状态</h3>
+                    <div class="stat-row">
+                        <span class="stat-label">生命</span>
+                        <div class="stat-bar-bg"><div class="stat-bar hp" id="bar-hp" style="width:100%"></div></div>
+                        <span class="stat-value" id="val-hp">100</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">饱食</span>
+                        <div class="stat-bar-bg"><div class="stat-bar hunger" id="bar-hunger" style="width:100%"></div></div>
+                        <span class="stat-value" id="val-hunger">100</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">水分</span>
+                        <div class="stat-bar-bg"><div class="stat-bar thirst" id="bar-thirst" style="width:100%"></div></div>
+                        <span class="stat-value" id="val-thirst">100</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">体力</span>
+                        <div class="stat-bar-bg"><div class="stat-bar energy" id="bar-energy" style="width:100%"></div></div>
+                        <span class="stat-value" id="val-energy">100</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">理智</span>
+                        <div class="stat-bar-bg"><div class="stat-bar sanity" id="bar-sanity" style="width:100%"></div></div>
+                        <span class="stat-value" id="val-sanity">100</span>
+                    </div>
+                </div>
+
+                <!-- Inventory -->
+                <div id="inventory-panel">
+                    <h3>▸ 物品栏 <span class="hint">(点击使用)</span></h3>
+                    <div id="inventory-list">
+                        <div class="empty-inventory">背包空空如也...</div>
+                    </div>
+                </div>
+
+                <!-- Combat Panel (hidden by default) -->
+                <div id="combat-panel">
+                    <h3>⚔️ 战斗中</h3>
+                    <div id="combat-enemy-info"></div>
+                    <div id="combat-actions">
+                        <button class="action-btn combat-btn" onclick="Game.attack()">⚔️ 攻击 [A]</button>
+                        <button class="action-btn combat-btn" onclick="Game.defend()">🛡️ 防御 [D]</button>
+                        <button class="action-btn combat-btn" onclick="Game.flee()">🏃 逃跑 [F]</button>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div id="actions-panel">
+                    <button class="action-btn" id="btn-location" data-action="move">📍 庇护所</button>
+                    <button class="action-btn" data-action="explore">🔍 探索 [E]</button>
+                    <button class="action-btn" data-action="rest">💤 休息 [R]</button>
+                    <button class="action-btn" data-action="craft">🔧 合成 [C]</button>
+                    <button class="action-btn" data-action="inventory">🎒 物品 [I]</button>
+                    <button class="action-btn" data-action="save">💾 保存</button>
+                </div>
+            </section>
+        </main>
+
+        <!-- Overlay: Start Screen -->
+        <div id="overlay-start" class="overlay active">
+            <div class="overlay-content">
+                <h2>废 土 求 生</h2>
+                <p>世界已崩塌，你还在呼吸。<br>在这片废墟中，活下去。</p>
+                <button id="btn-new-game">开始求生</button>
+                <button id="btn-load-game">加载存档</button>
+            </div>
+        </div>
+
+        <!-- Overlay: Craft Menu -->
+        <div id="overlay-craft" class="overlay">
+            <div class="overlay-content">
+                <h3>合成配方</h3>
+                <div id="craft-list"></div>
+                <button class="overlay-close" data-close="overlay-craft">返回</button>
+            </div>
+        </div>
+
+        <!-- Overlay: Location Menu -->
+        <div id="overlay-location" class="overlay">
+            <div class="overlay-content">
+                <h3>选择目的地</h3>
+                <div id="location-list"></div>
+                <button class="overlay-close" data-close="overlay-location">返回</button>
+            </div>
+        </div>
+
+        <!-- Overlay: Use Item Menu -->
+        <div id="overlay-use-item" class="overlay">
+            <div class="overlay-content">
+                <h3>使用物品</h3>
+                <div id="use-item-list"></div>
+                <button class="overlay-close" data-close="overlay-use-item">返回</button>
+            </div>
+        </div>
+
+        <!-- Overlay: Save Menu -->
+        <div id="overlay-save" class="overlay">
+            <div class="overlay-content">
+                <h3>存档列表</h3>
+                <div id="save-list"></div>
+                <button class="overlay-close" data-close="overlay-save">返回</button>
+            </div>
+        </div>
+
+        <!-- Overlay: Help -->
+        <div id="overlay-help" class="overlay">
+            <div class="overlay-content">
+                <h3>生存指南</h3>
+                <div class="help-text">
+                    <p><b>目标：</b>收集3个无线电零件，前往通讯塔求救</p>
+                    <p><b>按键：</b>E探索 R休息 C合成 I物品 M移动</p>
+                    <p><b>战斗：</b>A攻击 D防御 F逃跑</p>
+                    <p><b>Ctrl+S：</b>保存游戏</p>
+                    <hr style="border-color: var(--border); margin: 8px 0;">
+                    <p>💡 探索消耗体力，休息恢复体力但消耗食物和水</p>
+                    <p>⚠️ 危险地点有更高几率找到稀有物资</p>
+                    <p>🔧 合成武器和护甲能大幅提升战斗力</p>
+                </div>
+                <button class="overlay-close" data-close="overlay-help">返回</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="animations.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+services:
+  wasteland:
+    build: .
+    container_name: wasteland-survive
+    ports:
+      - "8000:8000"
+    volumes:
+      - saves_data:/app/backend/saves.db
+    restart: unless-stopped
+
+volumes:
+  saves_data:
