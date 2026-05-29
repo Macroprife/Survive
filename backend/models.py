@@ -75,7 +75,7 @@ class GameState(BaseModel):
     game_over_reason: str = ""
     survival_score: int = 0
     pending_event: Optional[Event] = None
-    radio_parts_found: int = 0
+    tower_siege_wave: int = 0
     ending_reached: bool = False
 
 

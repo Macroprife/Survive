@@ -74,6 +74,12 @@ def get_db():
 
 # ── API Endpoints ────────────────────────────────────────────────────────────
 
+@app.get("/api/items")
+def get_items():
+    """Return item metadata registry for frontend use."""
+    return game_engine.ITEM_REGISTRY
+
+
 @app.post("/api/new-game")
 def new_game():
     _cleanup_stale_games()
@@ -109,8 +115,12 @@ def do_action(game_id: str, action: Action):
     if state.pending_event and state.pending_event.type == "combat":
         if action.action_type in (ActionType.ATTACK, ActionType.DEFEND, ActionType.FLEE):
             combat_action = action.action_type.value
-            evt = game_engine.do_combat_action(state, combat_action)
-            events.append(evt)
+            if state.tower_siege_wave > 0:
+                siege_events = game_engine.do_siege_combat(state, combat_action)
+                events.extend(siege_events)
+            else:
+                evt = game_engine.do_combat_action(state, combat_action)
+                events.append(evt)
         else:
             events.append(Event(type="error", title="战斗中", description="你正处于战斗中！请选择：攻击、防御或逃跑"))
     elif action.action_type == ActionType.EXPLORE:

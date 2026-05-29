@@ -5,6 +5,7 @@ const Game = (() => {
     let gameId = null;
     let gameState = null;
     let actionInProgress = false;
+    let itemRegistry = null;  // fetched from /api/items
 
     // ===== DOM REFS =====
     const narrative = document.getElementById('narrative-content');
@@ -41,8 +42,15 @@ const Game = (() => {
         }
     }
 
-    // ===== NARRATIVE (TYPING EFFECT) =====
-    function addNarrative(text, cls = '') {
+    // ===== NARRATIVE (TYPING EFFECT - SERIAL QUEUE) =====
+    const _narrativeQueue = [];
+    let _narrativeBusy = false;
+
+    function _processQueue() {
+        if (_narrativeBusy || _narrativeQueue.length === 0) return;
+        _narrativeBusy = true;
+        const { text, cls, resolve } = _narrativeQueue.shift();
+
         const line = document.createElement('div');
         line.className = `narrative-line ${cls}`;
         line.textContent = '';
@@ -57,8 +65,18 @@ const Game = (() => {
                 narrativeArea.scrollTop = narrativeArea.scrollHeight;
             } else {
                 clearInterval(interval);
+                _narrativeBusy = false;
+                resolve();
+                _processQueue();
             }
         }, 20);
+    }
+
+    function addNarrative(text, cls = '') {
+        return new Promise(resolve => {
+            _narrativeQueue.push({ text, cls, resolve });
+            _processQueue();
+        });
     }
 
     function addNarrativeInstant(text, cls = '') {
@@ -70,6 +88,8 @@ const Game = (() => {
     }
 
     function clearNarrative() {
+        _narrativeQueue.length = 0;
+        _narrativeBusy = false;
         narrative.innerHTML = '';
     }
 
@@ -100,7 +120,7 @@ const Game = (() => {
             invList.innerHTML = inv.map(item => {
                 const name = item.name || item.id || '???';
                 const qty = item.quantity ? ` x${item.quantity}` : '';
-                const usable = item.usable || ['food', 'water', 'medicine', 'bandage', 'armor'].includes(item.id);
+                const usable = itemRegistry ? (itemRegistry[item.id]?.usable ?? false) : item.usable;
                 return `<div class="inv-item ${usable ? 'inv-item-usable' : ''}" data-item-id="${item.id}" ${usable ? `onclick="Game.useItem('${item.id}')"` : ''}>
                     <span>${name}${qty}</span>
                     ${usable ? '<span class="use-hint">[使用]</span>' : ''}
@@ -288,20 +308,16 @@ const Game = (() => {
     function showUseItemMenu() {
         if (!gameState) return;
         const inv = gameState.inventory || [];
-        const usableIds = ['food', 'water', 'medicine', 'bandage', 'armor'];
-        const usable = inv.filter(item => usableIds.includes(item.id));
+        const usable = inv.filter(item => itemRegistry ? (itemRegistry[item.id]?.usable ?? false) : false);
 
         const useList = document.getElementById('use-item-list');
         if (usable.length === 0) {
             useList.innerHTML = '<div class="craft-item">没有可使用的物品</div>';
         } else {
             useList.innerHTML = usable.map(item => {
-                const effects = {
-                    food: '饱腹 +35', water: '水分 +40', medicine: 'HP +30',
-                    bandage: 'HP +20', armor: '装备护甲',
-                };
+                const effect = itemRegistry?.[item.id]?.effect || '';
                 return `<div class="craft-item">
-                    <span>${item.name} x${item.quantity} (${effects[item.id] || ''})</span>
+                    <span>${item.name} x${item.quantity} ${effect ? `(${effect})` : ''}</span>
                     <button onclick="Game.useItem('${item.id}')">使用</button>
                 </div>`;
             }).join('');
@@ -336,6 +352,10 @@ const Game = (() => {
     }
 
     async function loadSave(saveId) {
+        if (!itemRegistry) {
+            const reg = await apiCall('GET', '/items');
+            if (reg) itemRegistry = reg;
+        }
         const data = await apiCall('POST', `/load/${saveId}`);
         if (data) {
             gameId = data.game_id;
@@ -350,6 +370,10 @@ const Game = (() => {
 
     // ===== NEW GAME =====
     async function newGame() {
+        if (!itemRegistry) {
+            const reg = await apiCall('GET', '/items');
+            if (reg) itemRegistry = reg;
+        }
         const data = await apiCall('POST', '/new-game');
         if (data) {
             gameId = data.game_id;

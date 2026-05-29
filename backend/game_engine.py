@@ -3,6 +3,25 @@ import uuid
 from .models import GameState, Player, Event, Item, ActionType
 
 
+# ── Item Registry (single source of truth) ─────────────────────────────────
+ITEM_REGISTRY = {
+    "food":       {"name": "食物",   "usable": True,  "effect": "饱腹 +35"},
+    "water":      {"name": "水",     "usable": True,  "effect": "水分 +40"},
+    "medicine":   {"name": "药品",   "usable": True,  "effect": "HP +30"},
+    "bandage":    {"name": "绷带",   "usable": True,  "effect": "HP +20"},
+    "weapon":     {"name": "武器",   "usable": False, "effect": "攻击 +5"},
+    "armor":      {"name": "护甲",   "usable": True,  "effect": "防御 12"},
+    "torch":      {"name": "火把",   "usable": False, "effect": "降低遭遇率"},
+    "tools":      {"name": "工具",   "usable": False, "effect": ""},
+    "radio_parts": {"name": "无线电零件", "usable": False, "effect": "集齐3个前往通讯塔"},
+    "cloth":      {"name": "布料",   "usable": False, "effect": ""},
+    "wood":       {"name": "木头",   "usable": False, "effect": ""},
+    "metal":      {"name": "金属",   "usable": False, "effect": ""},
+    "alcohol":    {"name": "酒精",   "usable": False, "effect": ""},
+    "herb":       {"name": "草药",   "usable": False, "effect": ""},
+}
+
+
 # ── Locations ────────────────────────────────────────────────────────────────
 LOCATIONS = {
     "shelter": {
@@ -180,12 +199,8 @@ def create_new_game() -> GameState:
 
 
 def get_item_name(item_id: str) -> str:
-    names = {
-        "food": "食物", "water": "水", "medicine": "药品", "bandage": "绷带",
-        "weapon": "武器", "armor": "护甲", "tools": "工具", "radio_parts": "无线电零件",
-        "cloth": "布料", "wood": "木头", "metal": "金属", "alcohol": "酒精", "herb": "草药",
-    }
-    return names.get(item_id, item_id)
+    meta = ITEM_REGISTRY.get(item_id)
+    return meta["name"] if meta else item_id
 
 
 def _add_item(inventory: list[Item], item_id: str, name: str, desc: str, qty: int = 1):
@@ -214,6 +229,11 @@ def _consume_item(inventory: list[Item], item_id: str, qty: int = 1):
 
 def _clamp(val: int, lo: int = 0, hi: int = 100) -> int:
     return max(lo, min(hi, val))
+
+
+def _day_scale(state: GameState) -> float:
+    """Difficulty multiplier that increases with day number. Caps at 1.5x."""
+    return 1.0 + min(state.day * 0.03, 0.5)
 
 
 def apply_daily_consumption(state: GameState) -> list[Event]:
@@ -282,6 +302,7 @@ def use_item(state: GameState, item_id: str) -> Event:
         p.hp = _clamp(p.hp + 20)
         return Event(type="use", title="包扎伤口", description="你小心地用绷带包扎好伤口，血止住了。生命值 +20")
     elif item_id == "armor":
+        _consume_item(state.inventory, "armor")
         p.has_armor = True
         p.defense = 12
         return Event(type="equip", title="装备护甲", description="你穿上了防刺背心，感到安全了一些。防御力提升。")
@@ -325,9 +346,30 @@ def do_explore(state: GameState, location_id: str | None = None) -> list[Event]:
     # Location description
     events.append(Event(type="move", title=loc["name"], description=loc["description"]))
 
-    # Danger check (torch halves encounter rate)
+    # Tower siege check — if at radio_tower with 3+ parts, start siege instead of normal explore
+    if target == "radio_tower" and _count_item(state.inventory, "radio_parts") >= 3 and state.tower_siege_wave == 0:
+        state.tower_siege_wave = 1
+        siege_mult = _day_scale(state)
+        enemy_hp = int(random.randint(30, 45) * siege_mult)
+        events.append(Event(
+            type="narrative", title="通讯塔保卫战",
+            description=(
+                "你将无线电零件插入通讯塔的设备，开始调试频率。\n\n"
+                "但设备启动的信号引来了废土上的掠夺者——他们也想控制这座通讯塔！\n\n"
+                "守卫通讯塔，击退所有敌人才能完成求救！")))
+        siege_event = Event(
+            type="combat", title="第一波进攻！",
+            description="拾荒者从四面八方涌来！\n\n⚔️ 攻击 | 🛡️ 防御 | 🏃 逃跑（= 放弃守塔）",
+            effects={"enemy": "拾荒者突击队", "enemy_hp": enemy_hp},
+            resolved=False)
+        state.pending_event = siege_event
+        events.append(siege_event)
+        return events
+
+    # Danger check (torch halves encounter rate, day scales difficulty)
     has_torch = _has_item(state.inventory, "torch")
-    effective_rate = loc["encounter_rate"] * (0.5 if has_torch else 1.0)
+    day_mult = _day_scale(state)
+    effective_rate = loc["encounter_rate"] * (0.5 if has_torch else 1.0) * day_mult
     danger_roll = random.random()
     if danger_roll < effective_rate:
         event = _generate_encounter(state, loc["danger_level"])
@@ -381,7 +423,8 @@ def _generate_encounter(state: GameState, danger: str) -> Event:
     if etype == "hostile":
         names = ["疯狂的拾荒者", "武装匪徒", "变异的流浪汉", "绝望的幸存者"]
         enemy = random.choice(names)
-        enemy_hp = random.randint(20, 50)
+        day_mult = _day_scale(state)
+        enemy_hp = int(random.randint(20, 50) * day_mult)
         return Event(
             type="combat", title="遭遇敌人！",
             description=f"{enemy}出现在你面前！他看起来充满敌意，手里握着武器。\n\n你需要做出选择：\n⚔️ 攻击 - 与敌人战斗\n🛡️ 防御 - 减少受到的伤害\n🏃 逃跑 - 尝试逃离（可能失败）",
@@ -425,7 +468,7 @@ def _generate_random_event(state: GameState) -> Event | None:
     elif etype == "clue":
         # Add a radio_parts item to inventory (win condition checks inventory count)
         _add_item(state.inventory, "radio_parts", "无线电零件", "通过线索找到的通讯设备零件")
-        return Event(type="clue", title=title, description=f"{desc}\\n\\n（获得无线电零件！）")
+        return Event(type="clue", title=title, description=f"{desc}\n\n（获得无线电零件！）")
     elif etype == "hostile":
         enemy = random.choice(["疯狂的拾荒者", "武装匪徒", "绝望的幸存者"])
         enemy_hp = random.randint(15, 35)
@@ -498,6 +541,104 @@ def do_combat_action(state: GameState, action: str) -> Event:
     return Event(type="error", title="无效操作", description="未知的战斗操作。")
 
 
+def do_siege_combat(state: GameState, action: str) -> list[Event]:
+    """Handle combat during tower siege. Returns list of events."""
+    evt = state.pending_event
+    if not evt or evt.type != "combat":
+        return [Event(type="error", title="没有战斗", description="当前没有进行中的战斗。")]
+
+    p = state.player
+    enemy_hp = evt.effects.get("enemy_hp", 30)
+    enemy_name = evt.effects.get("enemy", "敌人")
+    enemy_atk = random.randint(10, 20)
+    player_atk = p.attack_power + (5 if p.has_weapon else 0)
+    siege_mult = _day_scale(state)
+
+    if action == "attack":
+        dmg = random.randint(player_atk - 3, player_atk + 5)
+        enemy_hp -= dmg
+        recv = max(0, random.randint(enemy_atk - 3, enemy_atk + 3) - (p.defense if p.has_armor else 0))
+        p.hp = _clamp(p.hp - recv)
+
+        if p.hp <= 0:
+            state.pending_event = None
+            state.game_over = True
+            state.game_over_reason = "你在通讯塔保卫战中倒下了……求救信号未能发出。"
+            return [Event(type="game_over", title="死亡", description=state.game_over_reason)]
+
+        if enemy_hp <= 0:
+            state.tower_siege_wave += 1
+            state.pending_event = None
+
+            if state.tower_siege_wave > 3:
+                # Victory! Consume parts
+                _consume_item(state.inventory, "radio_parts", 3)
+                state.game_over = True
+                state.ending_reached = True
+                state.game_over_reason = "good"
+                return [Event(
+                    type="victory", title="求救成功！",
+                    description=(
+                        "你击退了所有掠夺者，成功启动了通讯设备！\n\n"
+                        "\"这里是废土求生者，有人能听到吗？重复，有人能听到吗？\"\n\n"
+                        "漫长的沉默后，扬声器里传来了回应：\n"
+                        "\"收到！这里是北方幸存者基地！我们马上派人来接你！坚持住！\"\n\n"
+                        f"你在废土中存活了 {state.day} 天。你终于等到了希望。\n\n"
+                        "—— 游戏通关 ——"))]
+
+            # Next wave
+            wave_info = {
+                2: ("武装匪徒精锐", 40, 60),
+                3: ("掠夺者首领", 55, 75),
+            }
+            next_name, lo, hi = wave_info[state.tower_siege_wave]
+            next_hp = int(random.randint(lo, hi) * siege_mult)
+
+            result = [Event(
+                type="combat_end", title=f"第{state.tower_siege_wave - 1}波击退！",
+                description=f"你击倒了{enemy_name}！受到伤害：-{recv}\n\n但下一波已经来了……")]
+
+            next_combat = Event(
+                type="combat", title=f"第{state.tower_siege_wave}波进攻！",
+                description=f"{next_name}出现了！\n\n⚔️ 攻击 | 🛡️ 防御 | 🏃 逃跑（= 放弃守塔）",
+                effects={"enemy": next_name, "enemy_hp": next_hp},
+                resolved=False)
+            state.pending_event = next_combat
+            result.append(next_combat)
+            return result
+
+        else:
+            evt.effects["enemy_hp"] = enemy_hp
+            state.pending_event = evt
+            return [Event(type="combat", title="战斗继续",
+                         description=f"你对{enemy_name}造成了 {dmg} 点伤害！但你也受到了 {recv} 点伤害。\n\n敌人剩余生命：{enemy_hp}\n你的生命：{p.hp}",
+                         effects={"enemy_hp": enemy_hp}, resolved=False)]
+
+    elif action == "defend":
+        recv = max(0, random.randint(2, 8) - (p.defense if p.has_armor else 0))
+        p.hp = _clamp(p.hp - recv)
+        p.energy = _clamp(p.energy - 5)
+
+        if p.hp <= 0:
+            state.pending_event = None
+            state.game_over = True
+            state.game_over_reason = "你在通讯塔保卫战中倒下了……求救信号未能发出。"
+            return [Event(type="game_over", title="死亡", description=state.game_over_reason)]
+
+        return [Event(type="combat", title="防御姿态",
+                     description=f"你举起防御，减少了受到的伤害。只受到了 {recv} 点伤害。\n\n你的生命：{p.hp}",
+                     effects={"enemy_hp": enemy_hp}, resolved=False)]
+
+    elif action == "flee":
+        state.pending_event = None
+        state.tower_siege_wave = 0
+        p.energy = _clamp(p.energy - 15)
+        return [Event(type="flee", title="放弃守塔",
+                     description="你逃离了通讯塔，放弃了这次求救机会。\n也许下次准备更充分再来……")]
+
+    return [Event(type="error", title="无效操作", description="未知的战斗操作。")]
+
+
 def do_craft(state: GameState, recipe_id: str) -> Event:
     recipe = CRAFT_RECIPES.get(recipe_id)
     if not recipe:
@@ -532,8 +673,13 @@ def _count_item(inventory: list[Item], item_id: str) -> int:
 
 
 def check_win_condition(state: GameState) -> bool:
-    # Only check inventory — no dual tracking with radio_parts_found
-    if _count_item(state.inventory, "radio_parts") >= 3:
+    if state.game_over:
+        return False
+    # Victory requires: at radio_tower, siege completed (wave > 3), and parts available
+    if (state.tower_siege_wave > 3 and
+            state.current_location == "radio_tower" and
+            _count_item(state.inventory, "radio_parts") >= 3):
+        _consume_item(state.inventory, "radio_parts", 3)
         state.game_over = True
         state.ending_reached = True
         state.game_over_reason = "good"
