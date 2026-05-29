@@ -92,6 +92,7 @@
                     <button class="action-btn" data-action="inventory">🎒 物品 [I]</button>
                     <button class="action-btn" data-action="save">💾 保存</button>
                     <button class="action-btn" data-action="npc">👥 幸存者 [N]</button>
+                    <button class="action-btn" data-action="inspect">🔎 检查 [X]</button>
                 </div>
             </section>
         </main>
@@ -170,6 +171,15 @@
             </div>
         </div>
 
+        <!-- Overlay: Inspect -->
+        <div id="overlay-inspect" class="overlay">
+            <div class="overlay-content">
+                <h3>🔎 检查物品</h3>
+                <div id="inspect-list"></div>
+                <button class="overlay-close" data-close="overlay-inspect">返回</button>
+            </div>
+        </div>
+
         <!-- Overlay: Shelter Upgrades -->
         <div id="overlay-shelter" class="overlay">
             <div class="overlay-content">
@@ -187,6 +197,7 @@
                     <p><b>目标：</b>收集3个无线电零件，前往通讯塔求救</p>
                     <p><b>按键：</b>E探索 R休息 C合成 I物品 M移动</p>
                     <p><b>N：</b>幸存者交互</p>
+                    <p><b>X：</b>检查物品</p>
                     <p><b>战斗：</b>A攻击 D防御 F逃跑</p>
                     <p><b>Ctrl+S：</b>保存游戏</p>
                     <hr style="border-color: var(--border); margin: 8px 0;">

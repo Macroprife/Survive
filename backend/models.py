@@ -14,6 +14,7 @@ class ActionType(str, Enum):
     DEFEND = "defend"
     FLEE = "flee"
     UPGRADE = "upgrade"
+    INSPECT = "inspect"
 
 
 class LocationName(str, Enum):

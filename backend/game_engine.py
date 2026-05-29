@@ -376,6 +376,8 @@ def do_rest(state: GameState) -> Event:
 
 
 def do_explore(state: GameState, location_id: str | None = None) -> list[Event]:
+    from .atmosphere import get_weather, get_time_period, get_location_atmosphere, get_explore_flavor, get_random_diary
+    
     events = []
     p = state.player
 
@@ -395,6 +397,44 @@ def do_explore(state: GameState, location_id: str | None = None) -> list[Event]:
 
     # Location description
     events.append(Event(type="move", title=loc["name"], description=loc["description"]))
+    
+    # 动态氛围描写
+    weather = get_weather(state.day)
+    time_period = get_time_period(state.day)
+    atmosphere_desc = get_location_atmosphere(target, state.day)
+    explore_flavor = get_explore_flavor(target)
+    
+    # 组合氛围描写
+    mood_text = f"【{time_period['name']}・{weather['name']}】\n\n"
+    mood_text += f"{time_period['description']}\n"
+    mood_text += f"{weather['description']}\n"
+    if atmosphere_desc:
+        mood_text += f"\n{atmosphere_desc}"
+    mood_text += f"\n\n{explore_flavor}"
+    
+    events.append(Event(type="atmosphere", title="环境", description=mood_text))
+    
+    # 天气效果
+    if weather.get("effect"):
+        for stat, value in weather["effect"].items():
+            if stat == "hp":
+                p.hp = _clamp(p.hp + value)
+            elif stat == "energy":
+                p.energy = _clamp(p.energy + value)
+            elif stat == "sanity":
+                p.sanity = _clamp(p.sanity + value)
+    
+    # 日记发现系统（20%概率）
+    if random.random() < 0.2:
+        diary = get_random_diary(target)
+        if diary:
+            events.append(Event(
+                type="diary", title=f"发现{diary['title']}",
+                description=f"你在废墟中发现了一段记录：\n\n"
+                           f"【{diary['title']}】\n"
+                           f"作者：{diary['author']}\n\n"
+                           f"{diary['content']}"
+            ))
 
     # Tower siege check — if at radio_tower with 3+ parts, start siege instead of normal explore
     if target == "radio_tower" and _count_item(state.inventory, "radio_parts") >= 3 and state.tower_siege_wave == 0:
@@ -803,6 +843,8 @@ def get_location_npcs(state: GameState) -> list[dict]:
 
 def do_npc_talk(state: GameState, npc_id: str) -> Event:
     """与NPC对话"""
+    import random
+    
     npc = get_npc(npc_id)
     if not npc:
         return Event(type="error", title="NPC不存在", description="找不到这个幸存者。")
@@ -823,24 +865,318 @@ def do_npc_talk(state: GameState, npc_id: str) -> Event:
             effects={"npc_id": npc_id, "relationship": 0}
         )
     else:
-        # 随机闲聊
-        import random
-        muttering = random.choice(npc["dialogue"]["idle_muttering"])
+        # 根据好感度获取不同对话
         rel = state.npc_relationships.get(npc_id, 0)
         
-        if rel >= 50:
-            attitude = "友善"
+        # 好感度对话系统
+        trust_dialogues = {
+            "NPC_001": {  # 马三
+                "hostile": [
+                    "又是你。你到底想干什么？",
+                    "我警告你，别打我的货的主意。",
+                    "马三不欢迎你。滚。",
+                ],
+                "cold": [
+                    "要买东西就买，不买就别挡着我做生意。",
+                    "我的时间很宝贵，别浪费。",
+                    "有什么事快说。",
+                ],
+                "neutral": [
+                    "哦，是你啊。今天需要点什么？",
+                    "最近物资不太好搞，价格可能要涨。",
+                    "听说东边来了群新人，也许能做笔生意。",
+                ],
+                "friendly": [
+                    "兄弟，你来了！今天给你个好价钱。",
+                    "跟你说个事，我仓库里藏了一批好货...",
+                    "你是我见过最靠谱的客户。",
+                ],
+                "trusted": [
+                    "兄弟，我跟你说实话...我有个女儿，她还活着。我一直在找她。",
+                    "如果你能帮我找到她，我所有的货都给你。",
+                    "这些年我做了很多错事...但为了女儿，我什么都愿意做。",
+                ],
+            },
+            "NPC_002": {  # 安娜
+                "hostile": [
+                    "你站住。再靠近一步，我不保证你的安全。",
+                    "我不信任你。离我远点。",
+                    "你的眼神让我想起了某个人...一个叛徒。",
+                ],
+                "cold": [
+                    "有话快说。我没时间陪你聊天。",
+                    "你需要什么？雇佣？交易？快点决定。",
+                    "别问我私人问题。我不回答。",
+                ],
+                "neutral": [
+                    "又是你。今天有什么需要？",
+                    "废土上像你这样的人不多了。",
+                    "保持警惕。这里不安全。",
+                ],
+                "friendly": [
+                    "你来了。坐吧，今天没什么事。",
+                    "你知道吗...你是第一个让我觉得可以信任的人。",
+                    "小王...我的战友...他如果还在，应该会喜欢你。",
+                ],
+                "trusted": [
+                    "我想告诉你一件事...核爆那天，我杀了自己的战友。",
+                    "他求我给他一个痛快。我照做了。",
+                    "你能理解吗？有时候，活下去比死更痛苦。",
+                ],
+            },
+            "NPC_003": {  # 老陈
+                "hostile": [
+                    "你...你不要过来！我有手术刀！",
+                    "你是不是马三派来的人？！",
+                    "我不会让你抢走我的药品的！",
+                ],
+                "cold": [
+                    "洗手了吗？没洗就别碰我的东西。",
+                    "有什么事快说，我还有病人要照顾。",
+                    "药品价格照旧，不讲价。",
+                ],
+                "neutral": [
+                    "哦，是你啊。今天需要什么？",
+                    "最近病人越来越多了...",
+                    "草药快用完了，你能帮我找点吗？",
+                ],
+                "friendly": [
+                    "你来了！坐，我给你检查检查身体。",
+                    "你知道吗...我以前有个徒弟，叫小雨。她现在还在医院附近种草药。",
+                    "如果你见到她，帮我告诉她...我很想她。",
+                ],
+                "trusted": [
+                    "我想告诉你一个秘密...我在研究一种抗辐射药。",
+                    "如果成功了，也许能拯救很多人。",
+                    "但我也在想...这种药，真的应该存在吗？",
+                ],
+            },
+            "NPC_004": {  # 玛丽亚
+                "hostile": [
+                    "孩子，你身上有邪气。让我为你净化...",
+                    "你是不是被魔鬼附身了？",
+                    "离开这里。这里不欢迎不信者。",
+                ],
+                "cold": [
+                    "孩子，你看起来需要指引。",
+                    "神在看着你。你的行为会被记录。",
+                    "如果你想得到救赎，就必须献出你的物资。",
+                ],
+                "neutral": [
+                    "孩子，你来了。今天想祈祷吗？",
+                    "神的光芒照耀着每一个信徒。",
+                    "如果你愿意，我可以为你祝福。",
+                ],
+                "friendly": [
+                    "孩子，你今天看起来很虔诚。",
+                    "神会保佑你的。你是我最信任的信徒之一。",
+                    "告诉你一个秘密...教会的地下室里，藏着一些好东西。",
+                ],
+                "trusted": [
+                    "孩子，我要告诉你真相...",
+                    "这个教会...其实是我编造的。",
+                    "但你知道吗？人们需要信仰。即使那是假的。",
+                ],
+            },
+            "NPC_005": {  # 阿光
+                "hostile": [
+                    "别...别过来！我会伤害你的！",
+                    "你是不是也想杀了我？",
+                    "离我远点！我是个怪物！",
+                ],
+                "cold": [
+                    "你需要什么？快说。",
+                    "别看我。我很丑。",
+                    "交易完就走吧。我不想吓到你。",
+                ],
+                "neutral": [
+                    "你...你又来了。今天需要什么？",
+                    "辐射区里有很多好东西。我可以帮你找。",
+                    "你是我见过少数不害怕我的人。",
+                ],
+                "friendly": [
+                    "你来了！今天想一起去辐射区吗？",
+                    "你知道吗...我以前是个程序员。每天写代码。",
+                    "小薇...我的女儿...她现在应该会走路了。",
+                ],
+                "trusted": [
+                    "我想告诉你...我一直在找我的妻子和女儿。",
+                    "她们在核爆第二天就离开了。我追了三个月，但没找到。",
+                    "你能帮我吗？她们叫...算了，你不会知道的。",
+                ],
+            },
+            "NPC_006": {  # 刘瘸子
+                "hostile": [
+                    "你身上有马三的味道。滚！",
+                    "你是不是马三派来监视我的？！",
+                    "我告诉你，我不会屈服的！",
+                ],
+                "cold": [
+                    "有什么事快说。我还要干活。",
+                    "要修东西就拿材料来。别废话。",
+                    "别问我腿的事。那是我的事。",
+                ],
+                "neutral": [
+                    "哦，是你啊。今天需要修什么？",
+                    "最近材料不好找。价格可能要涨。",
+                    "听说马三最近又在搞什么鬼。",
+                ],
+                "friendly": [
+                    "兄弟，你来了！今天给你打个折。",
+                    "你知道吗...我这条腿，是马三打断的。",
+                    "但我现在不在乎了。我只想好好活着。",
+                ],
+                "trusted": [
+                    "我想告诉你一件事...马三以前是我最好的朋友。",
+                    "我们一起做生意，一起打拼。但核爆那天...他背叛了我。",
+                    "你能理解吗？被最好的朋友背叛，是什么感觉？",
+                ],
+            },
+            "NPC_007": {  # 赵四
+                "hostile": [
+                    "你挡路了。让开。",
+                    "你不是我的目标。但别逼我破例。",
+                    "你的眼神让我想起了某个人...一个该死的人。",
+                ],
+                "cold": [
+                    "有话快说。我还有任务。",
+                    "你需要什么？武器？情报？快点决定。",
+                    "别问我是谁。你不需要知道。",
+                ],
+                "neutral": [
+                    "又是你。今天有什么需要？",
+                    "废土上像你这样的人不多了。",
+                    "保持警惕。这里不安全。",
+                ],
+                "friendly": [
+                    "你来了。坐吧，今天没什么事。",
+                    "你知道吗...你是第一个让我觉得可以信任的人。",
+                    "安娜...她如果还在，应该会喜欢你。",
+                ],
+                "trusted": [
+                    "我想告诉你一件事...核爆那天，我抛弃了自己的战友。",
+                    "他们求我带他们走。但我没有。",
+                    "你能理解吗？有时候，活下去比死更痛苦。",
+                ],
+            },
+            "NPC_008": {  # 林小雨
+                "hostile": [
+                    "你...你不要过来！我有草药！",
+                    "你是不是马三派来的人？！",
+                    "我不会让你抢走我的草药的！",
+                ],
+                "cold": [
+                    "你需要什么草药？快说。",
+                    "别碰我的植物。它们很脆弱。",
+                    "交易完就走吧。我还要照顾草药。",
+                ],
+                "neutral": [
+                    "哦，是你啊。今天需要什么草药？",
+                    "最近草药长得不太好...",
+                    "老陈师傅...他现在还好吗？",
+                ],
+                "friendly": [
+                    "你来了！今天给你看我新种的草药。",
+                    "你知道吗...我以前是老陈师傅的徒弟。",
+                    "他教了我很多东西。我真的很想他。",
+                ],
+                "trusted": [
+                    "我想告诉你一件事...老陈师傅以前救过我的命。",
+                    "核爆那天，我被玻璃划伤了。他亲手给我缝的针。",
+                    "你能理解吗？他是我在这个世界上唯一的亲人。",
+                ],
+            },
+            "NPC_009": {  # 张大力
+                "hostile": [
+                    "你是她的信徒吗？！你是不是玛丽亚派来抓我的？！",
+                    "离开这里！我不信任你！",
+                    "你身上有她的味道！滚！",
+                ],
+                "cold": [
+                    "你需要什么？快说。",
+                    "别问我关于教会的事。我不想回忆。",
+                    "交易完就走吧。我还要躲藏。",
+                ],
+                "neutral": [
+                    "哦，是你啊。今天需要什么？",
+                    "你看起来不像她的信徒。",
+                    "教会...他们现在还在找我。",
+                ],
+                "friendly": [
+                    "你来了！今天给你讲讲教会的秘密。",
+                    "你知道吗...玛丽亚其实是个骗子。",
+                    "她骗了我们所有人。我恨她。",
+                ],
+                "trusted": [
+                    "我想告诉你一件事...我以前是玛丽亚最虔诚的信徒。",
+                    "我把所有的东西都给了她。但后来我发现...她是个骗子。",
+                    "你能理解吗？被最信任的人背叛，是什么感觉？",
+                ],
+            },
+            "NPC_010": {  # 老王
+                "hostile": [
+                    "（警惕地看着你，发出低吼）",
+                    "（用手语比划：不要靠近）",
+                    "（转身离开，不理会你）",
+                ],
+                "cold": [
+                    "（点点头，算是打招呼）",
+                    "（用手语比划：需要什么？）",
+                    "（沉默地看着你）",
+                ],
+                "neutral": [
+                    "（用手语比划：你又来了）",
+                    "（点点头，表示欢迎）",
+                    "（用手语比划：阿光认识你）",
+                ],
+                "friendly": [
+                    "（高兴地用手语比划：你来了！）",
+                    "（用手语比划：今天一起去拾荒吧）",
+                    "（用手语比划：阿光说你是好人）",
+                ],
+                "trusted": [
+                    "（用手语比划：我想告诉你一件事）",
+                    "（用手语比划：我以前是建筑工人）",
+                    "（用手语比划：核爆那天，我失去了所有家人）",
+                ],
+            },
+        }
+        
+        # 获取NPC的对话库
+        npc_dialogues = trust_dialogues.get(npc_id, {})
+        
+        # 根据好感度选择对话级别
+        if rel >= 80:
+            trust_level = "trusted"
+        elif rel >= 50:
+            trust_level = "friendly"
         elif rel >= 20:
-            attitude = "中立"
+            trust_level = "neutral"
         elif rel >= 0:
-            attitude = "冷淡"
+            trust_level = "cold"
         else:
-            attitude = "敌对"
+            trust_level = "hostile"
+        
+        # 获取对话列表
+        dialogues = npc_dialogues.get(trust_level, npc["dialogue"]["idle_muttering"])
+        
+        # 随机选择对话
+        dialogue = random.choice(dialogues)
+        
+        # 态度描述
+        attitude_map = {
+            "trusted": "信任",
+            "friendly": "友善",
+            "neutral": "中立",
+            "cold": "冷淡",
+            "hostile": "敌对",
+        }
+        attitude = attitude_map.get(trust_level, "未知")
         
         return Event(
             type="npc_talk",
             title=f"与 {npc['name']} 对话",
-            description=f"【态度：{attitude}】\n\n\"{muttering}\"",
+            description=f"【态度：{attitude}】\n\n\"{dialogue}\"",
             effects={"npc_id": npc_id, "relationship": rel}
         )
 
@@ -1305,4 +1641,21 @@ def do_npc_scavenge(state: GameState, npc_id: str) -> Event:
                     f"（{loot[2]}）\n\n"
                     f"老王用手语比划着：这里还有更多...下次再来...",
         effects={"npc_id": npc_id, "item": loot[0]}
+    )
+
+
+def do_inspect(state: GameState, target: str) -> Event:
+    """检查场景中的物品"""
+    from .atmosphere import get_inspect_description
+    
+    location_id = state.current_location
+    description = get_inspect_description(location_id, target)
+    
+    if not description:
+        return Event(type="error", title="没有发现", description=f"你仔细检查了{target}，但没有发现什么特别的东西。")
+    
+    return Event(
+        type="inspect",
+        title=f"检查{target}",
+        description=description
     )

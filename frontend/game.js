@@ -203,6 +203,7 @@ const Game = (() => {
                 npc_hire: 'event', npc_heal: 'event', npc_bless: 'event',
                 npc_leave: 'info', npc_upgrade: 'event', npc_bounty: 'event',
                 npc_garden: 'event', npc_intel: 'event', npc_scavenge: 'event',
+                atmosphere: 'info', diary: 'event', inspect: 'info',
             }[ev.type] || '';
 
             if (ev.title && ev.description) {
@@ -587,6 +588,64 @@ const Game = (() => {
         }
     }
 
+    // ===== INSPECT MENU =====
+    function showInspectMenu() {
+        if (!gameState) return;
+        
+        // 根据当前地点显示可检查的物品
+        const locationInspectTargets = {
+            'shelter': ['wall', 'bed', 'corner', 'ceiling'],
+            'supermarket': ['shelf', 'cash_register', 'freezer', 'mirror'],
+            'hospital': ['medical_record', 'wheelchair', 'operating_room', 'medicine_cabinet'],
+            'police_station': ['bulletin_board', 'evidence_room', 'holding_cell', 'locker'],
+            'residential': ['photo_album', 'child_room', 'kitchen', 'balcony'],
+            'radio_tower': ['antenna', 'control_room', 'generator', 'view_from_top'],
+        };
+        
+        const targetNames = {
+            'wall': '墙壁',
+            'bed': '床铺',
+            'corner': '角落',
+            'ceiling': '天花板',
+            'shelf': '货架',
+            'cash_register': '收银台',
+            'freezer': '冰柜',
+            'mirror': '镜子',
+            'medical_record': '病历',
+            'wheelchair': '轮椅',
+            'operating_room': '手术室',
+            'medicine_cabinet': '药柜',
+            'bulletin_board': '布告栏',
+            'evidence_room': '证据室',
+            'holding_cell': '拘留室',
+            'locker': '更衣柜',
+            'photo_album': '相册',
+            'child_room': '儿童房',
+            'kitchen': '厨房',
+            'balcony': '阳台',
+            'antenna': '天线',
+            'control_room': '控制室',
+            'generator': '发电机',
+            'view_from_top': '塔顶风景',
+        };
+        
+        const targets = locationInspectTargets[gameState.current_location] || [];
+        const inspectList = document.getElementById('inspect-list');
+        
+        if (targets.length === 0) {
+            inspectList.innerHTML = '<div class="craft-item">这个地点没有什么特别的东西可以检查</div>';
+        } else {
+            inspectList.innerHTML = targets.map(target => 
+                `<div class="craft-item">
+                    <span>${targetNames[target] || target}</span>
+                    <button onclick="Game.inspect('${target}')">检查</button>
+                </div>`
+            ).join('');
+        }
+        
+        document.getElementById('overlay-inspect').classList.add('active');
+    }
+
     // ===== HELPERS =====
     function closeAllOverlays() {
         document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
@@ -610,6 +669,7 @@ const Game = (() => {
             else if (action === 'move') showLocationMenu();
             else if (action === 'save') saveGame();
             else if (action === 'npc') showNpcMenu();
+            else if (action === 'inspect') showInspectMenu();
         });
     });
 
@@ -637,6 +697,7 @@ const Game = (() => {
             case '5': case 'm': showLocationMenu(); break;
             case '6': case 'b': showShelterMenu(); break;
             case '7': case 'n': showNpcMenu(); break;
+            case '8': case 'x': showInspectMenu(); break;
             case 's': if (e.ctrlKey) { e.preventDefault(); saveGame(); } break;
             case 'h': case '?': document.getElementById('overlay-help').classList.toggle('active'); break;
             // Combat shortcuts
@@ -705,5 +766,9 @@ const Game = (() => {
         npcHerbGarden(npcId, action) { doNpcInteraction('herb_garden', npcId, action); },
         npcIntel(npcId) { doNpcInteraction('intel', npcId); },
         npcScavenge(npcId) { doNpcInteraction('scavenge', npcId); },
+        inspect(target) {
+            document.getElementById('overlay-inspect').classList.remove('active');
+            doAction('inspect', { target: target });
+        },
     };
 })();

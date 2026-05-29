@@ -179,6 +179,11 @@ def do_action(game_id: str, action: Action):
             events.append(Event(type="error", title="未指定设施", description="请指定要升级的设施。"))
         else:
             events.append(game_engine.do_upgrade(state, action.item_id))
+    elif action.action_type == ActionType.INSPECT:
+        if not action.target:
+            events.append(Event(type="error", title="未指定目标", description="请指定要检查的物品。"))
+        else:
+            events.append(game_engine.do_inspect(state, action.target))
     else:
         events.append(Event(type="error", title="未知操作", description="无法理解你的行为。"))
 
