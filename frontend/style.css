@@ -518,3 +518,76 @@ body::after {
         letter-spacing: 3px;
     }
 }
+
+/* ===== NPC STYLES ===== */
+.npc-info {
+    text-align: left;
+    font-size: 9px;
+    line-height: 1.8;
+}
+
+.npc-info p {
+    margin-bottom: 8px;
+}
+
+.npc-info b {
+    color: var(--text-amber);
+}
+
+#npc-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+#npc-detail-actions button {
+    flex: 1;
+    min-width: 100px;
+    padding: 8px;
+    background: rgba(57, 255, 20, 0.1);
+    border: 1px solid var(--text-green);
+    color: var(--text-green);
+    font-family: inherit;
+    font-size: 9px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#npc-detail-actions button:hover {
+    background: rgba(57, 255, 20, 0.25);
+    box-shadow: 0 0 8px rgba(57, 255, 20, 0.3);
+}
+
+#npc-trade-list {
+    text-align: left;
+}
+
+#npc-trade-list h4 {
+    color: var(--text-amber);
+    margin: 12px 0 8px 0;
+    font-size: 10px;
+}
+
+#npc-trade-list .craft-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+#npc-trade-list button {
+    padding: 4px 12px;
+    background: rgba(255, 191, 0, 0.1);
+    border: 1px solid var(--text-amber);
+    color: var(--text-amber);
+    font-family: inherit;
+    font-size: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#npc-trade-list button:hover {
+    background: rgba(255, 191, 0, 0.25);
+}

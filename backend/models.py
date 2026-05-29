@@ -13,6 +13,7 @@ class ActionType(str, Enum):
     ATTACK = "attack"
     DEFEND = "defend"
     FLEE = "flee"
+    UPGRADE = "upgrade"
 
 
 class LocationName(str, Enum):
@@ -77,6 +78,18 @@ class GameState(BaseModel):
     pending_event: Optional[Event] = None
     tower_siege_wave: int = 0
     ending_reached: bool = False
+    shelter_upgrades: dict[str, int] = {
+        "rain_collector": 0,
+        "garden": 0,
+        "bed": 0,
+    }
+    npc_met: list[str] = []  # 已遇到的NPC ID列表
+    npc_relationships: dict[str, int] = {}  # NPC好感度 NPC_ID -> 好感值
+    hired_mercenary: str | None = None  # 当前雇佣的佣兵NPC ID
+    mercenary_expire_day: int = 0  # 佣兵到期天数
+    bounty_clear_location: str | None = None  # 赏金猎人清除的地点
+    bounty_clear_expire_day: int = 0  # 清除效果到期天数
+    herb_garden_active: bool = False  # 草药园是否激活
 
 
 class Action(BaseModel):
@@ -91,3 +104,11 @@ class SaveData(BaseModel):
     save_name: str
     game_state: GameState
     saved_at: str
+
+
+class NPCInteraction(BaseModel):
+    """NPC交互动作"""
+    npc_id: str
+    action: str  # talk, trade_buy, trade_sell, hire, heal, bless, guide
+    item_id: str | None = None
+    quantity: int = 1

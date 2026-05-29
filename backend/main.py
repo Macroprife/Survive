@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .models import GameState, Action, ActionType, Event
+from .models import NPCInteraction
 from . import game_engine
 
 app = FastAPI(title="废土求生 API")
@@ -78,6 +79,21 @@ def get_db():
 def get_items():
     """Return item metadata registry for frontend use."""
     return game_engine.ITEM_REGISTRY
+
+
+@app.get("/api/recipes")
+def get_recipes():
+    """Return crafting recipes for frontend use."""
+    return game_engine.CRAFT_RECIPES
+
+
+@app.get("/api/shelter/{game_id}")
+def get_shelter(game_id: str):
+    """Return shelter upgrade status for a game."""
+    state = _get_game(game_id)
+    if not state:
+        raise HTTPException(404, "游戏不存在")
+    return game_engine.get_shelter_info(state)
 
 
 @app.post("/api/new-game")
@@ -158,6 +174,11 @@ def do_action(game_id: str, action: Action):
             state.current_location = action.target
             if action.target not in state.explored_locations:
                 state.explored_locations.append(action.target)
+    elif action.action_type == ActionType.UPGRADE:
+        if not action.item_id:
+            events.append(Event(type="error", title="未指定设施", description="请指定要升级的设施。"))
+        else:
+            events.append(game_engine.do_upgrade(state, action.item_id))
     else:
         events.append(Event(type="error", title="未知操作", description="无法理解你的行为。"))
 
@@ -210,6 +231,89 @@ def list_saves():
     return [{"save_id": r["save_id"], "save_name": r["save_name"], "saved_at": r["saved_at"]} for r in rows]
 
 
+@app.get("/api/npcs/{game_id}")
+def get_npcs(game_id: str):
+    """获取当前地点的NPC列表"""
+    state = _get_game(game_id)
+    if not state:
+        raise HTTPException(404, "游戏不存在")
+    npcs = game_engine.get_location_npcs(state)
+    return {"npcs": npcs, "location": state.current_location}
+
+
+@app.get("/api/npc/{npc_id}")
+def get_npc_info(npc_id: str):
+    """获取NPC详细信息"""
+    from .npcs import get_npc
+    npc = get_npc(npc_id)
+    if not npc:
+        raise HTTPException(404, "NPC不存在")
+    return npc
+
+
+@app.post("/api/game/{game_id}/npc")
+def npc_interaction(game_id: str, interaction: NPCInteraction):
+    """NPC交互"""
+    state = _get_game(game_id)
+    if not state:
+        raise HTTPException(404, "游戏不存在")
+    
+    if state.game_over:
+        return {"events": [{"type": "info", "title": "游戏已结束", "description": "你的废土之旅已经终结。"}], "state": state.model_dump()}
+    
+    events = []
+    
+    if interaction.action == "talk":
+        events.append(game_engine.do_npc_talk(state, interaction.npc_id))
+    elif interaction.action == "trade_buy":
+        if not interaction.item_id:
+            events.append(Event(type="error", title="未指定物品", description="请指定要购买的物品。"))
+        else:
+            events.append(game_engine.do_npc_trade_buy(state, interaction.npc_id, interaction.item_id, interaction.quantity))
+    elif interaction.action == "trade_sell":
+        if not interaction.item_id:
+            events.append(Event(type="error", title="未指定物品", description="请指定要出售的物品。"))
+        else:
+            events.append(game_engine.do_npc_trade_sell(state, interaction.npc_id, interaction.item_id, interaction.quantity))
+    elif interaction.action == "hire":
+        events.append(game_engine.do_npc_hire(state, interaction.npc_id))
+    elif interaction.action == "heal":
+        events.append(game_engine.do_npc_heal(state, interaction.npc_id))
+    elif interaction.action == "bless":
+        events.append(game_engine.do_npc_bless(state, interaction.npc_id))
+    elif interaction.action == "repair":
+        if not interaction.item_id:
+            events.append(Event(type="error", title="未指定类型", description="请指定升级类型：weapon 或 armor"))
+        else:
+            events.append(game_engine.do_npc_repair(state, interaction.npc_id, interaction.item_id))
+    elif interaction.action == "bounty":
+        if not interaction.item_id:
+            events.append(Event(type="error", title="未指定地点", description="请指定清剿目标地点"))
+        else:
+            events.append(game_engine.do_npc_bounty(state, interaction.npc_id, interaction.item_id))
+    elif interaction.action == "herb_garden":
+        if not interaction.item_id:
+            events.append(Event(type="error", title="未指定操作", description="请指定操作：activate 或 deactivate"))
+        else:
+            events.append(game_engine.do_npc_herb_garden(state, interaction.npc_id, interaction.item_id))
+    elif interaction.action == "intel":
+        events.append(game_engine.do_npc_intel(state, interaction.npc_id))
+    elif interaction.action == "scavenge":
+        events.append(game_engine.do_npc_scavenge(state, interaction.npc_id))
+    else:
+        events.append(Event(type="error", title="未知操作", description="无法理解你的行为。"))
+    
+    # 检查佣兵到期
+    merc_events = game_engine.check_mercenary_expire(state)
+    events.extend(merc_events)
+    
+    # 检查赏金猎人效果到期
+    bounty_events = game_engine.check_bounty_expire(state)
+    events.extend(bounty_events)
+    
+    return {"events": [e.model_dump() for e in events], "state": state.model_dump()}
+
+
 @app.post("/api/load/{save_id}")
 def load_game(save_id: str):
     with get_db() as conn:
@@ -230,6 +334,9 @@ if os.path.isdir(frontend_dir):
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
+        # 不拦截API请求
+        if full_path.startswith("api/"):
+            raise HTTPException(404, "API路由不存在")
         file_path = os.path.realpath(os.path.join(frontend_dir, full_path))
         # Prevent path traversal attacks
         if not file_path.startswith(os.path.realpath(frontend_dir)):

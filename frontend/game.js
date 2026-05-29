@@ -16,6 +16,7 @@ const Game = (() => {
     const overlaySave = document.getElementById('overlay-save');
     const overlayUseItem = document.getElementById('overlay-use-item');
     const overlayLocation = document.getElementById('overlay-location');
+    const overlayShelter = document.getElementById('overlay-shelter');
 
     const statBars = {
         hp: { bar: document.getElementById('bar-hp'), val: document.getElementById('val-hp') },
@@ -196,7 +197,12 @@ const Game = (() => {
                 loot: 'event', craft: 'event', use: 'event', equip: 'event',
                 clue: 'event', victory: 'event', rest: 'info', move: 'info',
                 daily: 'info', flee: 'info', sanity_break: 'danger',
+                shelter: 'event', upgrade: 'event',
                 error: 'danger', inventory: 'info', narrative: '',
+                npc_meet: 'event', npc_talk: 'info', npc_trade: 'event',
+                npc_hire: 'event', npc_heal: 'event', npc_bless: 'event',
+                npc_leave: 'info', npc_upgrade: 'event', npc_bounty: 'event',
+                npc_garden: 'event', npc_intel: 'event', npc_scavenge: 'event',
             }[ev.type] || '';
 
             if (ev.title && ev.description) {
@@ -261,19 +267,27 @@ const Game = (() => {
 
     // ===== CRAFT MENU =====
     async function showCraftMenu() {
-        const recipes = [
-            { id: 'medicine', name: '草药药剂', materials: '草药 x1 + 水 x1', effect: 'HP +30' },
-            { id: 'bandage', name: '消毒绷带', materials: '布料 x1 + 酒精 x1', effect: 'HP +20' },
-            { id: 'weapon', name: '自制武器', materials: '金属 x2 + 木头 x1', effect: '攻击 +8' },
-            { id: 'armor', name: '强化护甲', materials: '金属 x3 + 布料 x2', effect: '防御 12' },
-            { id: 'torch', name: '火把', materials: '木头 x1 + 布料 x1', effect: '降低遭遇率' },
-        ];
+        // 动态从后端获取最新配方
+        const recipesData = await apiCall('GET', '/recipes');
+        if (!recipesData) return;
+
+        // 确保 itemRegistry 已加载
+        if (!itemRegistry) {
+            const reg = await apiCall('GET', '/items');
+            if (reg) itemRegistry = reg;
+        }
 
         const craftList = document.getElementById('craft-list');
-        craftList.innerHTML = recipes.map(r => {
+        craftList.innerHTML = Object.entries(recipesData).map(([id, r]) => {
+            const ingredientsStr = r.ingredients.map(([ingId, qty]) => {
+                return `${itemRegistry?.[ingId]?.name || ingId} x${qty}`;
+            }).join(' + ');
+
+            const effect = itemRegistry?.[r.result.id]?.effect || r.result.desc;
+
             return `<div class="craft-item">
-                <span>${r.name} (${r.materials}) <span class="hint">${r.effect}</span></span>
-                <button onclick="Game.craft('${r.id}')">合成</button>
+                <span>${r.result.name} (${ingredientsStr}) <br><span class="hint">${effect}</span></span>
+                <button onclick="Game.craft('${id}')">合成</button>
             </div>`;
         }).join('');
 
@@ -324,6 +338,184 @@ const Game = (() => {
         }
 
         overlayUseItem.classList.add('active');
+    }
+
+    // ===== SHELTER UPGRADES =====
+    async function showShelterMenu() {
+        if (!gameId) return;
+        const shelterData = await apiCall('GET', `/shelter/${gameId}`);
+        if (!shelterData) return;
+
+        const shelterList = document.getElementById('shelter-list');
+        shelterList.innerHTML = Object.entries(shelterData).map(([id, info]) => {
+            const levelStr = `Lv.${info.level}/${info.max_level}`;
+            const maxed = info.level >= info.max_level;
+            const bonusText = maxed ? '✅ 已满级' : info.bonus;
+            const costText = maxed ? '' : `<br><span class="hint">材料：${info.cost_str}</span>`;
+
+            return `<div class="craft-item">
+                <span>${info.name} ${levelStr}<br><span class="hint">${info.desc}</span><br><span class="hint">${bonusText}</span>${costText}</span>
+                ${maxed ? '' : `<button onclick="Game.upgrade('${id}')">升级</button>`}
+            </div>`;
+        }).join('');
+
+        overlayShelter.classList.add('active');
+    }
+
+    // ===== NPC MENU =====
+    let currentNpcId = null;
+
+    async function showNpcMenu() {
+        if (!gameId) return;
+        const data = await apiCall('GET', `/npcs/${gameId}`);
+        if (!data) return;
+
+        const npcList = document.getElementById('npc-list');
+        if (data.npcs.length === 0) {
+            npcList.innerHTML = '<div class="craft-item">这个地点没有幸存者</div>';
+        } else {
+            npcList.innerHTML = data.npcs.map(npc => {
+                const metBadge = npc.met ? '✓已遇' : '新';
+                const relBadge = npc.met ? `好感:${npc.relationship}` : '';
+                return `<div class="craft-item">
+                    <span>${npc.name} <span class="hint">[${npc.type}]</span> <span class="hint">${metBadge} ${relBadge}</span></span>
+                    <button onclick="Game.showNpcDetail('${npc.id}')">交互</button>
+                </div>`;
+            }).join('');
+        }
+
+        document.getElementById('overlay-npc').classList.add('active');
+    }
+
+    async function showNpcDetail(npcId) {
+        if (!gameId) return;
+        const npcData = await apiCall('GET', `/npc/${npcId}`);
+        if (!npcData) return;
+
+        currentNpcId = npcId;
+        const npcState = await apiCall('GET', `/npcs/${gameId}`);
+        const npcInState = npcState?.npcs?.find(n => n.id === npcId);
+
+        document.getElementById('npc-detail-name').textContent = npcData.name;
+        
+        const infoDiv = document.getElementById('npc-detail-info');
+        infoDiv.innerHTML = `
+            <div class="npc-info">
+                <p><b>阵营：</b>${npcData.faction}</p>
+                <p><b>类型：</b>${npcData.type}</p>
+                <p><b>性格：</b>${npcData.personality}</p>
+                <p><b>背景：</b>${npcData.background_summary}</p>
+                ${npcInState?.met ? `<p><b>好感度：</b>${npcInState.relationship}</p>` : '<p><span class="hint">尚未相识</span></p>'}
+            </div>
+        `;
+
+        const actionsDiv = document.getElementById('npc-detail-actions');
+        let actionsHtml = `
+            <button onclick="Game.npcTalk('${npcId}')">💬 对话</button>
+        `;
+
+        // 根据NPC类型添加特殊交互
+        if (npcId === 'NPC_002') {
+            actionsHtml += `<button onclick="Game.npcHire('${npcId}')">⚔️ 雇佣佣兵</button>`;
+        }
+        if (npcId === 'NPC_003') {
+            actionsHtml += `<button onclick="Game.npcHeal('${npcId}')">💊 治疗</button>`;
+        }
+        if (npcId === 'NPC_004') {
+            actionsHtml += `<button onclick="Game.npcBless('${npcId}')">🙏 祝福</button>`;
+        }
+        if (npcId === 'NPC_006') {
+            actionsHtml += `<button onclick="Game.npcRepair('${npcId}', 'weapon')">⚔️ 升级武器</button>`;
+            actionsHtml += `<button onclick="Game.npcRepair('${npcId}', 'armor')">🛡️ 升级护甲</button>`;
+        }
+        if (npcId === 'NPC_007') {
+            actionsHtml += `<button onclick="Game.showBountyMenu('${npcId}')">🎯 清剿任务</button>`;
+        }
+        if (npcId === 'NPC_008') {
+            actionsHtml += `<button onclick="Game.npcHerbGarden('${npcId}', 'activate')">🌿 激活草药园</button>`;
+            actionsHtml += `<button onclick="Game.npcHerbGarden('${npcId}', 'deactivate')">🚫 关闭草药园</button>`;
+        }
+        if (npcId === 'NPC_009') {
+            actionsHtml += `<button onclick="Game.npcIntel('${npcId}')">🔍 获取情报</button>`;
+        }
+        if (npcId === 'NPC_010') {
+            actionsHtml += `<button onclick="Game.npcScavenge('${npcId}')">⛏️ 辐射区拾荒</button>`;
+        }
+
+        // 交易按钮
+        actionsHtml += `
+            <button onclick="Game.showNpcTrade('${npcId}')">💰 交易</button>
+        `;
+
+        actionsDiv.innerHTML = actionsHtml;
+
+        document.getElementById('overlay-npc').classList.remove('active');
+        document.getElementById('overlay-npc-detail').classList.add('active');
+    }
+
+    async function showNpcTrade(npcId) {
+        if (!gameId) return;
+        const npcData = await apiCall('GET', `/npc/${npcId}`);
+        if (!npcData) return;
+
+        const tradeList = document.getElementById('npc-trade-list');
+        let html = '<h4>出售物品</h4>';
+        
+        // NPC出售的物品
+        if (npcData.trade_table?.buy) {
+            html += Object.entries(npcData.trade_table.buy).map(([itemId, info]) => {
+                const itemName = itemRegistry?.[itemId]?.name || itemId;
+                return `<div class="craft-item">
+                    <span>${itemName} - ${info.price}食物</span>
+                    <button onclick="Game.npcTradeBuy('${npcId}', '${itemId}')">购买</button>
+                </div>`;
+            }).join('');
+        }
+
+        html += '<h4>收购物品</h4>';
+        // NPC收购的物品
+        if (npcData.trade_table?.sell) {
+            html += Object.entries(npcData.trade_table.sell).map(([itemId, info]) => {
+                const itemName = itemRegistry?.[itemId]?.name || itemId;
+                return `<div class="craft-item">
+                    <span>${itemName} - ${info.price}食物</span>
+                    <button onclick="Game.npcTradeSell('${npcId}', '${itemId}')">出售</button>
+                </div>`;
+            }).join('');
+        }
+
+        tradeList.innerHTML = html;
+        document.getElementById('overlay-npc-trade').classList.add('active');
+    }
+
+    async function doNpcInteraction(action, npcId, itemId = null, quantity = 1) {
+        if (actionInProgress || !gameId) return;
+        actionInProgress = true;
+        disableActions(true);
+
+        const body = {
+            npc_id: npcId,
+            action: action,
+            item_id: itemId,
+            quantity: quantity
+        };
+
+        const data = await apiCall('POST', `/game/${gameId}/npc`, body);
+
+        if (data) {
+            displayEvents(data.events);
+            renderState(data.state);
+        }
+
+        actionInProgress = false;
+        if (!gameState?.game_over) {
+            disableActions(false);
+        }
+
+        // 刷新NPC详情
+        if (currentNpcId) {
+            showNpcDetail(currentNpcId);
+        }
     }
 
     // ===== SAVE/LOAD =====
@@ -413,9 +605,11 @@ const Game = (() => {
             if (action === 'explore') doAction('explore');
             else if (action === 'rest') doAction('rest');
             else if (action === 'craft') showCraftMenu();
+            else if (action === 'shelter') showShelterMenu();
             else if (action === 'inventory') showUseItemMenu();
             else if (action === 'move') showLocationMenu();
             else if (action === 'save') saveGame();
+            else if (action === 'npc') showNpcMenu();
         });
     });
 
@@ -441,6 +635,8 @@ const Game = (() => {
             case '3': case 'c': showCraftMenu(); break;
             case '4': case 'i': showUseItemMenu(); break;
             case '5': case 'm': showLocationMenu(); break;
+            case '6': case 'b': showShelterMenu(); break;
+            case '7': case 'n': showNpcMenu(); break;
             case 's': if (e.ctrlKey) { e.preventDefault(); saveGame(); } break;
             case 'h': case '?': document.getElementById('overlay-help').classList.toggle('active'); break;
             // Combat shortcuts
@@ -467,8 +663,47 @@ const Game = (() => {
         attack() { doAction('attack'); },
         defend() { doAction('defend'); },
         flee() { doAction('flee'); },
+        upgrade(upgradeId) {
+            overlayShelter.classList.remove('active');
+            doAction('upgrade', { item_id: upgradeId });
+        },
         loadSave,
         saveGame,
         showSaves,
+        showNpcMenu,
+        showNpcDetail,
+        showNpcTrade,
+        npcTalk(npcId) { doNpcInteraction('talk', npcId); },
+        npcTradeBuy(npcId, itemId) { doNpcInteraction('trade_buy', npcId, itemId); },
+        npcTradeSell(npcId, itemId) { doNpcInteraction('trade_sell', npcId, itemId); },
+        npcHire(npcId) { doNpcInteraction('hire', npcId); },
+        npcHeal(npcId) { doNpcInteraction('heal', npcId); },
+        npcBless(npcId) { doNpcInteraction('bless', npcId); },
+        npcRepair(npcId, type) { doNpcInteraction('repair', npcId, type); },
+        showBountyMenu(npcId) {
+            // 显示清剿地点选择菜单
+            const locations = [
+                { id: 'supermarket', name: '废弃超市' },
+                { id: 'hospital', name: '市中心医院' },
+                { id: 'police_station', name: '警察局' },
+                { id: 'residential', name: '居民区废墟' },
+                { id: 'radio_tower', name: '通讯塔' },
+            ];
+            const tradeList = document.getElementById('npc-trade-list');
+            tradeList.innerHTML = '<h4>选择清剿目标</h4>' + locations.map(loc => 
+                `<div class="craft-item">
+                    <span>${loc.name}</span>
+                    <button onclick="Game.npcBounty('${npcId}', '${loc.id}')">清剿</button>
+                </div>`
+            ).join('');
+            document.getElementById('overlay-npc-trade').classList.add('active');
+        },
+        npcBounty(npcId, locationId) {
+            document.getElementById('overlay-npc-trade').classList.remove('active');
+            doNpcInteraction('bounty', npcId, locationId);
+        },
+        npcHerbGarden(npcId, action) { doNpcInteraction('herb_garden', npcId, action); },
+        npcIntel(npcId) { doNpcInteraction('intel', npcId); },
+        npcScavenge(npcId) { doNpcInteraction('scavenge', npcId); },
     };
 })();

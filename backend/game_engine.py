@@ -9,7 +9,7 @@ ITEM_REGISTRY = {
     "water":      {"name": "水",     "usable": True,  "effect": "水分 +40"},
     "medicine":   {"name": "药品",   "usable": True,  "effect": "HP +30"},
     "bandage":    {"name": "绷带",   "usable": True,  "effect": "HP +20"},
-    "weapon":     {"name": "武器",   "usable": False, "effect": "攻击 +5"},
+    "weapon":     {"name": "武器",   "usable": True,  "effect": "攻击 18"},
     "armor":      {"name": "护甲",   "usable": True,  "effect": "防御 12"},
     "torch":      {"name": "火把",   "usable": False, "effect": "降低遭遇率"},
     "tools":      {"name": "工具",   "usable": False, "effect": ""},
@@ -114,6 +114,28 @@ CRAFT_RECIPES = {
     "weapon": {"ingredients": [("metal", 2), ("wood", 1)], "result": {"id": "weapon", "name": "自制武器", "desc": "用金属和木头打造的简易武器"}},
     "armor": {"ingredients": [("metal", 3), ("cloth", 2)], "result": {"id": "armor", "name": "强化护甲", "desc": "用金属片和布料缝制的防护装备"}},
     "torch": {"ingredients": [("wood", 1), ("cloth", 1)], "result": {"id": "torch", "name": "火把", "desc": "简易照明工具，探索时降低遭遇率"}},
+}
+
+# ── Shelter Upgrades ──────────────────────────────────────────────────────
+UPGRADE_RECIPES = {
+    "rain_collector": {
+        "name": "雨水收集器",
+        "desc": "利用雨水净化设备，每天自动收集水分",
+        "cost": [("metal", 2), ("wood", 2)],
+        "bonus": "每天清晨自动产出 1 瓶水",
+    },
+    "garden": {
+        "name": "无土药草槽",
+        "desc": "在避难所内培育废土草药",
+        "cost": [("wood", 2), ("herb", 1)],
+        "bonus": "每天清晨自动产出 1 个草药",
+    },
+    "bed": {
+        "name": "强化床铺",
+        "desc": "用木板和布料搭建的舒适床铺",
+        "cost": [("wood", 2), ("cloth", 2)],
+        "bonus": "休息时额外恢复 HP +10、理智 +5",
+    },
 }
 
 # ── Random events ────────────────────────────────────────────────────────────
@@ -244,6 +266,21 @@ def apply_daily_consumption(state: GameState) -> list[Event]:
     p.energy = _clamp(p.energy - 10)
     p.sanity = _clamp(p.sanity - 5)
 
+    # ── Shelter upgrade daily yields ──
+    upgrades = state.shelter_upgrades
+    if upgrades.get("rain_collector", 0) > 0:
+        _add_item(state.inventory, "water", "瓶装水", "雨水收集器净化的水")
+        events.append(Event(type="shelter", title="雨水收集器",
+                            description="清晨，雨水收集器滴滴答答地工作着。你获得了一瓶净化水。"))
+    if upgrades.get("garden", 0) > 0:
+        _add_item(state.inventory, "herb", "草药", "避难所药草槽种植的草药")
+        events.append(Event(type="shelter", title="药草槽",
+                            description="药草槽里的植物长势喜人。你收获了一株草药。"))
+    
+    # ── 草药园每日产出 ──
+    herb_events = check_herb_garden(state)
+    events.extend(herb_events)
+
     if p.hunger == 0:
         p.hp = _clamp(p.hp - 10)
         events.append(Event(type="damage", title="饥饿侵蚀", description="你已经很久没有进食了，饥饿像野兽一样啃噬着你的身体。生命值 -10"))
@@ -306,6 +343,11 @@ def use_item(state: GameState, item_id: str) -> Event:
         p.has_armor = True
         p.defense = 12
         return Event(type="equip", title="装备护甲", description="你穿上了防刺背心，感到安全了一些。防御力提升。")
+    elif item_id == "weapon":
+        _consume_item(state.inventory, "weapon")
+        p.has_weapon = True
+        p.attack_power = 18
+        return Event(type="equip", title="装备武器", description="你装备了自制武器，感觉自己更有力量了。基础攻击提升至 18。")
     else:
         return Event(type="error", title="无法使用", description=f"{get_item_name(item_id)}无法在此时使用。")
 
@@ -315,9 +357,17 @@ def do_rest(state: GameState) -> Event:
     p.energy = _clamp(p.energy + 40)
     p.sanity = _clamp(p.sanity + 10)
     p.hp = _clamp(p.hp + 5)
+
+    # Bed upgrade bonus
+    bed_desc = ""
+    if state.shelter_upgrades.get("bed", 0) > 0:
+        p.hp = _clamp(p.hp + 10)
+        p.sanity = _clamp(p.sanity + 5)
+        bed_desc = " 强化床铺让你睡得更香，额外恢复了 HP +10、理智 +5。"
+
     state.day += 1
     daily_events = apply_daily_consumption(state)
-    desc = "你在避难所里休息了一段时间，恢复了一些体力和精神。"
+    desc = "你在避难所里休息了一段时间，恢复了一些体力和精神。" + bed_desc
     if state.player.hp <= 0:
         state.game_over = True
         state.game_over_reason = "你在睡梦中再也没有醒来……"
@@ -664,6 +714,54 @@ def do_craft(state: GameState, recipe_id: str) -> Event:
                  description=f"你成功制作了 {res['name']}！({res['desc']})")
 
 
+def do_upgrade(state: GameState, upgrade_id: str) -> Event:
+    """Upgrade a shelter facility."""
+    recipe = UPGRADE_RECIPES.get(upgrade_id)
+    if not recipe:
+        available = ", ".join(UPGRADE_RECIPES.keys())
+        return Event(type="error", title="未知设施", description=f"没有这个基建项目。可用：{available}")
+
+    current_level = state.shelter_upgrades.get(upgrade_id, 0)
+    if current_level >= 3:
+        return Event(type="error", title="已满级", description=f"{recipe['name']}已达到最高等级。")
+
+    # Check and consume ingredients
+    for item_id, qty in recipe["cost"]:
+        if not _has_item(state.inventory, item_id, qty):
+            return Event(type="error", title="材料不足",
+                         description=f"升级{recipe['name']}需要：" +
+                         "、".join(f"{get_item_name(i)}x{q}" for i, q in recipe["cost"]))
+
+    for item_id, qty in recipe["cost"]:
+        _consume_item(state.inventory, item_id, qty)
+
+    state.shelter_upgrades[upgrade_id] = current_level + 1
+    new_level = current_level + 1
+
+    return Event(
+        type="upgrade", title=f"{recipe['name']} Lv.{new_level}",
+        description=f"你完成了避难所改造——{recipe['name']}升级到了 Lv.{new_level}！\n{recipe['desc']}。{recipe['bonus']}"
+    )
+
+
+def get_shelter_info(state: GameState) -> dict:
+    """Return shelter upgrade status for API/frontend use."""
+    result = {}
+    for uid, recipe in UPGRADE_RECIPES.items():
+        level = state.shelter_upgrades.get(uid, 0)
+        cost_str = "、".join(f"{get_item_name(i)}x{q}" for i, q in recipe["cost"])
+        result[uid] = {
+            "name": recipe["name"],
+            "desc": recipe["desc"],
+            "bonus": recipe["bonus"],
+            "level": level,
+            "max_level": 3,
+            "cost": recipe["cost"],
+            "cost_str": cost_str,
+        }
+    return result
+
+
 def _count_item(inventory: list[Item], item_id: str) -> int:
     """Count total quantity of an item in inventory."""
     for item in inventory:
@@ -685,3 +783,526 @@ def check_win_condition(state: GameState) -> bool:
         state.game_over_reason = "good"
         return True
     return False
+
+
+# ── NPC System ───────────────────────────────────────────────────────────────
+from .npcs import get_npc, get_npcs_by_location, NPC_REGISTRY
+
+
+def get_location_npcs(state: GameState) -> list[dict]:
+    """获取当前地点的NPC列表，包含好感度信息"""
+    npcs = get_npcs_by_location(state.current_location)
+    result = []
+    for npc in npcs:
+        npc_info = npc.copy()
+        npc_info["met"] = npc["id"] in state.npc_met
+        npc_info["relationship"] = state.npc_relationships.get(npc["id"], 0)
+        result.append(npc_info)
+    return result
+
+
+def do_npc_talk(state: GameState, npc_id: str) -> Event:
+    """与NPC对话"""
+    npc = get_npc(npc_id)
+    if not npc:
+        return Event(type="error", title="NPC不存在", description="找不到这个幸存者。")
+    
+    # 检查是否在同一个地点
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    # 标记已遇到
+    if npc_id not in state.npc_met:
+        state.npc_met.append(npc_id)
+        state.npc_relationships[npc_id] = 0
+        dialogue = npc["dialogue"]["first_meet"]
+        return Event(
+            type="npc_meet",
+            title=f"遇到 {npc['name']}",
+            description=f"【{npc['faction']}】\n\n{npc['personality']}\n\n\"{dialogue}\"",
+            effects={"npc_id": npc_id, "relationship": 0}
+        )
+    else:
+        # 随机闲聊
+        import random
+        muttering = random.choice(npc["dialogue"]["idle_muttering"])
+        rel = state.npc_relationships.get(npc_id, 0)
+        
+        if rel >= 50:
+            attitude = "友善"
+        elif rel >= 20:
+            attitude = "中立"
+        elif rel >= 0:
+            attitude = "冷淡"
+        else:
+            attitude = "敌对"
+        
+        return Event(
+            type="npc_talk",
+            title=f"与 {npc['name']} 对话",
+            description=f"【态度：{attitude}】\n\n\"{muttering}\"",
+            effects={"npc_id": npc_id, "relationship": rel}
+        )
+
+
+def do_npc_trade_buy(state: GameState, npc_id: str, item_id: str, quantity: int = 1) -> Event:
+    """从NPC处购买物品"""
+    npc = get_npc(npc_id)
+    if not npc:
+        return Event(type="error", title="NPC不存在", description="找不到这个幸存者。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    trade = npc.get("trade_table", {}).get("buy", {})
+    if item_id not in trade:
+        return Event(type="error", title="物品不存在", description=f"{npc['name']}不卖这个东西。")
+    
+    item_info = trade[item_id]
+    total_cost = item_info["price"] * quantity
+    
+    # 检查库存
+    if item_info.get("stock", 0) < quantity:
+        return Event(type="error", title="库存不足", description=f"{npc['name']}没有那么多{get_item_name(item_id)}。")
+    
+    # 检查玩家是否有足够的食物/水作为货币
+    # 这里简化为用食物作为通用货币
+    if not _has_item(state.inventory, "food", total_cost):
+        return Event(type="error", title="物资不足", 
+                     description=f"需要{total_cost}个食物来购买。你没有那么多。")
+    
+    # 执行交易
+    _consume_item(state.inventory, "food", total_cost)
+    _add_item(state.inventory, item_id, get_item_name(item_id), f"从{npc['name']}处购买")
+    
+    # 增加好感度
+    state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 2
+    
+    return Event(
+        type="npc_trade",
+        title="交易成功",
+        description=f"你用{total_cost}个食物从{npc['name']}处购买了{quantity}个{get_item_name(item_id)}。\n\n\"{npc['dialogue']['trade_success']}\"",
+        effects={"npc_id": npc_id, "relationship": state.npc_relationships[npc_id]}
+    )
+
+
+def do_npc_trade_sell(state: GameState, npc_id: str, item_id: str, quantity: int = 1) -> Event:
+    """向NPC出售物品"""
+    npc = get_npc(npc_id)
+    if not npc:
+        return Event(type="error", title="NPC不存在", description="找不到这个幸存者。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    trade = npc.get("trade_table", {}).get("sell", {})
+    if item_id not in trade:
+        return Event(type="error", title="不收此物", description=f"{npc['name']}不收这个东西。")
+    
+    if not _has_item(state.inventory, item_id, quantity):
+        return Event(type="error", title="物品不足", description=f"你没有那么多{get_item_name(item_id)}。")
+    
+    price = trade[item_id]["price"]
+    total_gain = price * quantity
+    
+    # 执行交易
+    _consume_item(state.inventory, item_id, quantity)
+    _add_item(state.inventory, "food", "食物", f"卖给{npc['name']}获得", total_gain)
+    
+    # 增加好感度
+    state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 1
+    
+    return Event(
+        type="npc_trade",
+        title="交易成功",
+        description=f"你向{npc['name']}出售了{quantity}个{get_item_name(item_id)}，获得{total_gain}个食物。\n\n\"{npc['dialogue']['trade_success']}\"",
+        effects={"npc_id": npc_id, "relationship": state.npc_relationships[npc_id]}
+    )
+
+
+def do_npc_hire(state: GameState, npc_id: str) -> Event:
+    """雇佣佣兵（仅安娜）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_002":
+        return Event(type="error", title="无法雇佣", description="这个NPC不能被雇佣。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    if state.hired_mercenary:
+        return Event(type="error", title="已有佣兵", description="你已经雇佣了佣兵，不能同时雇佣多人。")
+    
+    merc = npc.get("mercenary", {})
+    cost = merc.get("hire_cost", {})
+    
+    # 检查物资
+    for item_id, qty in cost.items():
+        if not _has_item(state.inventory, item_id, qty):
+            return Event(type="error", title="物资不足", 
+                         description=f"雇佣{npc['name']}需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+    
+    # 扣除物资
+    for item_id, qty in cost.items():
+        _consume_item(state.inventory, item_id, qty)
+    
+    state.hired_mercenary = npc_id
+    state.mercenary_expire_day = state.day + merc.get("duration", 3)
+    state.player.attack_power += merc.get("attack_bonus", 0)
+    state.player.defense += merc.get("defense_bonus", 0)
+    
+    return Event(
+        type="npc_hire",
+        title=f"雇佣 {npc['name']}",
+        description=f"你成功雇佣了{npc['name']}！她将在{merc.get('duration', 3)}天内保护你。\n\n攻击 +{merc.get('attack_bonus', 0)}，防御 +{merc.get('defense_bonus', 0)}",
+        effects={"npc_id": npc_id, "duration": merc.get("duration", 3)}
+    )
+
+
+def do_npc_heal(state: GameState, npc_id: str) -> Event:
+    """找老陈治疗（仅老陈）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_003":
+        return Event(type="error", title="无法治疗", description="这个NPC不能提供治疗。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    heal = npc.get("healing", {})
+    cost = heal.get("cost", {})
+    
+    # 检查物资
+    for item_id, qty in cost.items():
+        if not _has_item(state.inventory, item_id, qty):
+            return Event(type="error", title="物资不足", 
+                         description=f"治疗需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+    
+    # 扣除物资
+    for item_id, qty in cost.items():
+        _consume_item(state.inventory, item_id, qty)
+    
+    # 恢复HP
+    old_hp = state.player.hp
+    state.player.hp = _clamp(state.player.hp + heal.get("hp_restore", 50))
+    actual_restore = state.player.hp - old_hp
+    
+    # 增加好感度
+    state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 3
+    
+    return Event(
+        type="npc_heal",
+        title="治疗完成",
+        description=f"{npc['name']}帮你处理了伤口。HP恢复了{actual_restore}点。\n\n\"别乱动，我还没洗手呢...不对，我洗了七次了。\"",
+        effects={"npc_id": npc_id, "hp_restore": actual_restore}
+    )
+
+
+def do_npc_bless(state: GameState, npc_id: str) -> Event:
+    """找玛丽亚祝福（仅玛丽亚）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_004":
+        return Event(type="error", title="无法祝福", description="这个NPC不能提供祝福。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    bless = npc.get("blessing", {})
+    cost = bless.get("cost", 20)
+    
+    # 检查理智值
+    if state.player.sanity < cost:
+        return Event(type="error", title="理智不足", description=f"你需要至少{cost}点理智值来接受祝福。")
+    
+    # 扣除理智
+    state.player.sanity = _clamp(state.player.sanity - cost)
+    
+    # 恢复理智
+    old_sanity = state.player.sanity
+    state.player.sanity = _clamp(state.player.sanity + bless.get("sanity_restore", 30))
+    actual_restore = state.player.sanity - old_sanity
+    
+    # 增加好感度
+    state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 2
+    
+    return Event(
+        type="npc_bless",
+        title="接受祝福",
+        description=f"玛丽亚为你进行了'祝福'仪式。理智恢复了{actual_restore}点，但你感觉自己的独立思考能力似乎下降了...\n\n\"愿神保佑你，孩子。\"",
+        effects={"npc_id": npc_id, "sanity_restore": actual_restore}
+    )
+
+
+def check_mercenary_expire(state: GameState) -> list[Event]:
+    """检查佣兵是否到期"""
+    events = []
+    if state.hired_mercenary and state.day >= state.mercenary_expire_day:
+        npc = get_npc(state.hired_mercenary)
+        if npc:
+            merc = npc.get("mercenary", {})
+            state.player.attack_power -= merc.get("attack_bonus", 0)
+            state.player.defense -= merc.get("defense_bonus", 0)
+            events.append(Event(
+                type="npc_leave",
+                title=f"{npc['name']} 离开了",
+                description=f"雇佣期限到了，{npc['name']}收拾东西离开了。\n\n攻击 -{merc.get('attack_bonus', 0)}，防御 -{merc.get('defense_bonus', 0)}",
+                effects={"npc_id": state.hired_mercenary}
+            ))
+            state.hired_mercenary = None
+            state.mercenary_expire_day = 0
+    return events
+
+
+def check_bounty_expire(state: GameState) -> list[Event]:
+    """检查赏金猎人清除效果是否到期"""
+    events = []
+    if state.bounty_clear_location and state.day >= state.bounty_clear_expire_day:
+        events.append(Event(
+            type="npc_leave",
+            title="清剿效果消失",
+            description=f"赵四的清剿效果已经消失，{LOCATIONS.get(state.bounty_clear_location, {}).get('name', '该地点')}的敌对势力重新聚集。"
+        ))
+        state.bounty_clear_location = None
+        state.bounty_clear_expire_day = 0
+    return events
+
+
+def check_herb_garden(state: GameState) -> list[Event]:
+    """检查草药园每日产出"""
+    events = []
+    if state.herb_garden_active:
+        _add_item(state.inventory, "herb", "草药", "林小雨草药园产出")
+        _add_item(state.inventory, "herb", "草药", "林小雨草药园产出")
+        events.append(Event(
+            type="shelter",
+            title="草药园产出",
+            description="林小雨的草药园长势喜人。你收获了2株草药。"
+        ))
+    return events
+
+
+# ── 新NPC特殊功能 ─────────────────────────────────────────────────────────
+
+def do_npc_repair(state: GameState, npc_id: str, upgrade_type: str) -> Event:
+    """刘瘸子装备升级（仅NPC_006）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_006":
+        return Event(type="error", title="无法升级", description="这个NPC不能提供装备升级。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    repair = npc.get("repair", {})
+    
+    if upgrade_type == "weapon":
+        if not state.player.has_weapon:
+            return Event(type="error", title="没有武器", description="你还没有装备武器，无法升级。")
+        recipe = repair.get("upgrade_weapon", {})
+        cost = recipe.get("cost", {})
+        bonus = recipe.get("bonus", 5)
+        
+        for item_id, qty in cost.items():
+            if not _has_item(state.inventory, item_id, qty):
+                return Event(type="error", title="材料不足",
+                             description=f"升级武器需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+        
+        for item_id, qty in cost.items():
+            _consume_item(state.inventory, item_id, qty)
+        
+        state.player.attack_power += bonus
+        state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 3
+        
+        return Event(
+            type="npc_upgrade",
+            title="武器升级完成",
+            description=f"刘瘸子改造了你的武器。攻击力 +{bonus}。\n\n\"别小看一个瘸子的手艺。这把刀现在能砍穿钢板。\"",
+            effects={"npc_id": npc_id, "attack_bonus": bonus}
+        )
+    
+    elif upgrade_type == "armor":
+        if not state.player.has_armor:
+            return Event(type="error", title="没有护甲", description="你还没有装备护甲，无法升级。")
+        recipe = repair.get("upgrade_armor", {})
+        cost = recipe.get("cost", {})
+        bonus = recipe.get("bonus", 4)
+        
+        for item_id, qty in cost.items():
+            if not _has_item(state.inventory, item_id, qty):
+                return Event(type="error", title="材料不足",
+                             description=f"升级护甲需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+        
+        for item_id, qty in cost.items():
+            _consume_item(state.inventory, item_id, qty)
+        
+        state.player.defense += bonus
+        state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 3
+        
+        return Event(
+            type="npc_upgrade",
+            title="护甲升级完成",
+            description=f"刘瘸子强化了你的护甲。防御力 +{bonus}。\n\n\"马三打断了我的腿，但我这双手还能干活。\"",
+            effects={"npc_id": npc_id, "defense_bonus": bonus}
+        )
+    
+    return Event(type="error", title="未知升级", description="可用升级：weapon, armor")
+
+
+def do_npc_bounty(state: GameState, npc_id: str, location_id: str) -> Event:
+    """赵四清除敌对势力（仅NPC_007）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_007":
+        return Event(type="error", title="无法雇佣", description="这个NPC不能执行清剿任务。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    if location_id not in LOCATIONS:
+        return Event(type="error", title="未知地点", description="目标地点不存在。")
+    
+    bounty = npc.get("bounty_hunter", {})
+    cost = bounty.get("clear_cost", {})
+    
+    for item_id, qty in cost.items():
+        if not _has_item(state.inventory, item_id, qty):
+            return Event(type="error", title="物资不足",
+                         description=f"清剿任务需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+    
+    for item_id, qty in cost.items():
+        _consume_item(state.inventory, item_id, qty)
+    
+    state.bounty_clear_location = location_id
+    state.bounty_clear_expire_day = state.day + bounty.get("duration", 5)
+    state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 2
+    
+    loc_name = LOCATIONS[location_id]["name"]
+    
+    return Event(
+        type="npc_bounty",
+        title="清剿任务执行",
+        description=f"赵四前往{loc_name}执行清剿任务。\n\n接下来{bounty.get('duration', 5)}天内，该地点遭遇率降低{int(bounty.get('encounter_reduction', 0.5)*100)}%。\n\n\"三天之内，我会让那里的老鼠一只都不剩。\"",
+        effects={"npc_id": npc_id, "location": location_id, "duration": bounty.get("duration", 5)}
+    )
+
+
+def do_npc_herb_garden(state: GameState, npc_id: str, action: str) -> Event:
+    """林小雨草药园（仅NPC_008）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_008":
+        return Event(type="error", title="无法操作", description="这个NPC没有草药园。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    garden = npc.get("herb_garden", {})
+    
+    if action == "activate":
+        if state.herb_garden_active:
+            return Event(type="error", title="已激活", description="草药园已经在运作了。")
+        
+        cost = garden.get("maintenance_cost", {})
+        for item_id, qty in cost.items():
+            if not _has_item(state.inventory, item_id, qty):
+                return Event(type="error", title="物资不足",
+                             description=f"激活草药园需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+        
+        for item_id, qty in cost.items():
+            _consume_item(state.inventory, item_id, qty)
+        
+        state.herb_garden_active = True
+        state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 5
+        
+        return Event(
+            type="npc_garden",
+            title="草药园激活",
+            description=f"林小雨的草药园已经开始为你工作。每天自动产出{garden.get('daily_herb', 2)}株草药。\n\n\"太好了！我终于有帮手了！你放心，这些草药绝对新鲜。\"",
+            effects={"npc_id": npc_id, "daily_herb": garden.get("daily_herb", 2)}
+        )
+    
+    elif action == "deactivate":
+        if not state.herb_garden_active:
+            return Event(type="error", title="未激活", description="草药园还没有激活。")
+        state.herb_garden_active = False
+        return Event(
+            type="npc_garden",
+            title="草药园关闭",
+            description="你告诉林小雨暂时不需要草药了。她看起来有点失落。"
+        )
+    
+    return Event(type="error", title="未知操作", description="可用操作：activate, deactivate")
+
+
+def do_npc_intel(state: GameState, npc_id: str) -> Event:
+    """张大力情报（仅NPC_009）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_009":
+        return Event(type="error", title="无法获取情报", description="这个NPC没有情报可以提供。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    intel = npc.get("anti_church_intel", {})
+    cost = intel.get("intel_cost", {})
+    
+    for item_id, qty in cost.items():
+        if not _has_item(state.inventory, item_id, qty):
+            return Event(type="error", title="物资不足",
+                         description=f"获取情报需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+    
+    for item_id, qty in cost.items():
+        _consume_item(state.inventory, item_id, qty)
+    
+    state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 2
+    
+    return Event(
+        type="npc_intel",
+        title="教会情报",
+        description=f"张大力告诉你玛丽亚教会的内部情况：\n\n"
+                    f"• 教会的物资藏在居民区教堂地下室\n"
+                    f"• 玛丽亚每周三会独自去'祈祷'，其实是在清点物资\n"
+                    f"• 教会有3个守卫，但周三只有1个值班\n\n"
+                    f"效果：居民区遭遇率降低30%，持续3天。\n\n"
+                    f"\"那个女人...她骗了我们所有人。我恨她。\"",
+        effects={"npc_id": npc_id, "location": "residential", "duration": 3}
+    )
+
+
+def do_npc_scavenge(state: GameState, npc_id: str) -> Event:
+    """老王拾荒加成（仅NPC_010）"""
+    npc = get_npc(npc_id)
+    if not npc or npc_id != "NPC_010":
+        return Event(type="error", title="无法拾荒", description="这个NPC不能提供拾荒服务。")
+    
+    if npc.get("location") != state.current_location:
+        return Event(type="error", title="NPC不在这里", description=f"{npc['name']}不在这个地点。")
+    
+    special = npc.get("special", {})
+    cost = special.get("scavenge_cost", {})
+    
+    for item_id, qty in cost.items():
+        if not _has_item(state.inventory, item_id, qty):
+            return Event(type="error", title="物资不足",
+                         description=f"拾荒需要：{'、'.join(f'{get_item_name(i)}x{q}' for i, q in cost.items())}")
+    
+    for item_id, qty in cost.items():
+        _consume_item(state.inventory, item_id, qty)
+    
+    # 随机获得稀有物资
+    import random
+    possible_loot = [
+        ("radio_parts", "无线电零件", "从辐射区深处找到的通讯设备零件"),
+        ("metal", "稀有金属", "辐射区特有的高强度合金"),
+        ("tools", "精密工具", "核爆前遗留的专业工具套装"),
+        ("medicine", "军用药品", "密封完好的军用急救包"),
+    ]
+    
+    loot = random.choice(possible_loot)
+    _add_item(state.inventory, loot[0], loot[1], loot[2])
+    
+    state.npc_relationships[npc_id] = state.npc_relationships.get(npc_id, 0) + 1
+    
+    return Event(
+        type="npc_scavenge",
+        title="辐射区拾荒",
+        description=f"老王带着你深入辐射区，找到了 {loot[1]}！\n\n"
+                    f"（{loot[2]}）\n\n"
+                    f"老王用手语比划着：这里还有更多...下次再来...",
+        effects={"npc_id": npc_id, "item": loot[0]}
+    )

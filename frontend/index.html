@@ -88,8 +88,10 @@
                     <button class="action-btn" data-action="explore">🔍 探索 [E]</button>
                     <button class="action-btn" data-action="rest">💤 休息 [R]</button>
                     <button class="action-btn" data-action="craft">🔧 合成 [C]</button>
+                    <button class="action-btn" data-action="shelter">🏗️ 避难所 [B]</button>
                     <button class="action-btn" data-action="inventory">🎒 物品 [I]</button>
                     <button class="action-btn" data-action="save">💾 保存</button>
+                    <button class="action-btn" data-action="npc">👥 幸存者 [N]</button>
                 </div>
             </section>
         </main>
@@ -140,6 +142,43 @@
             </div>
         </div>
 
+        <!-- Overlay: NPC Menu -->
+        <div id="overlay-npc" class="overlay">
+            <div class="overlay-content">
+                <h3>👥 废土幸存者</h3>
+                <div id="npc-list"></div>
+                <button class="overlay-close" data-close="overlay-npc">返回</button>
+            </div>
+        </div>
+
+        <!-- Overlay: NPC Detail -->
+        <div id="overlay-npc-detail" class="overlay">
+            <div class="overlay-content">
+                <h3 id="npc-detail-name">NPC详情</h3>
+                <div id="npc-detail-info"></div>
+                <div id="npc-detail-actions"></div>
+                <button class="overlay-close" data-close="overlay-npc-detail">返回</button>
+            </div>
+        </div>
+
+        <!-- Overlay: NPC Trade -->
+        <div id="overlay-npc-trade" class="overlay">
+            <div class="overlay-content">
+                <h3>💰 交易</h3>
+                <div id="npc-trade-list"></div>
+                <button class="overlay-close" data-close="overlay-npc-trade">返回</button>
+            </div>
+        </div>
+
+        <!-- Overlay: Shelter Upgrades -->
+        <div id="overlay-shelter" class="overlay">
+            <div class="overlay-content">
+                <h3>🏗️ 避难所基建</h3>
+                <div id="shelter-list"></div>
+                <button class="overlay-close" data-close="overlay-shelter">返回</button>
+            </div>
+        </div>
+
         <!-- Overlay: Help -->
         <div id="overlay-help" class="overlay">
             <div class="overlay-content">
@@ -147,6 +186,7 @@
                 <div class="help-text">
                     <p><b>目标：</b>收集3个无线电零件，前往通讯塔求救</p>
                     <p><b>按键：</b>E探索 R休息 C合成 I物品 M移动</p>
+                    <p><b>N：</b>幸存者交互</p>
                     <p><b>战斗：</b>A攻击 D防御 F逃跑</p>
                     <p><b>Ctrl+S：</b>保存游戏</p>
                     <hr style="border-color: var(--border); margin: 8px 0;">
